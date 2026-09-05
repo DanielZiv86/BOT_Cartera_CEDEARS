@@ -1,0 +1,18 @@
+version: "1.0"
+effective_date: "2026-09-05"
+reason_code: USER_EXCLUDED_FROM_ANALYSIS
+reason: "Explicit user decision: exclude from CEDEAR analysis universe."
+
+tickers:
+  - BK
+  - BRFS
+  - DESP
+  - EA
+  - EBR
+  - ELP
+  - ERJ
+  - MMC
+  - TEFO
+  - WBA
+  - X
+  - YY
