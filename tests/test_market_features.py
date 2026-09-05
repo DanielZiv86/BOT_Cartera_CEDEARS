@@ -1,5 +1,3 @@
-import math
-
 import pandas as pd
 
 from src.features.market_features import calculate_market_features
@@ -35,5 +33,5 @@ def test_market_features_partial_when_history_short():
     features, metrics = calculate_market_features(_history(rows=80))
     row = features.iloc[0]
     assert row["feature_status"] == "FEATURES_PARTIAL"
-    assert math.isnan(row["return_252d"]) or pd.isna(row["return_252d"])
+    assert pd.isna(row["return_252d"])
     assert metrics["pass_market_features"] is False
