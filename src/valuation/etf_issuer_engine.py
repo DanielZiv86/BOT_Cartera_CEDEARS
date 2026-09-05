@@ -6,7 +6,7 @@ from typing import Any
 from src.connectors.finnhub import FinnhubConnector
 from src.connectors.issuer_holdings import IssuerHoldingsConnector, IssuerHoldingsError
 from src.valuation.common import age_days, normalized_probabilities
-from src.valuation.etf_engine import _holding_scenario_return
+from src.valuation.etf_engine import ConstituentScenario, _cached_holding_scenario_return
 
 
 def _cached_equity_return(row: dict[str, Any] | None) -> dict[str, float] | None:
@@ -40,6 +40,7 @@ def build_issuer_etf_scenario(
     policy: dict[str, Any],
     as_of: date | None = None,
     equity_scenarios: dict[str, dict[str, Any]] | None = None,
+    constituent_cache: dict[str, ConstituentScenario] | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
@@ -94,8 +95,10 @@ def build_issuer_etf_scenario(
     weighted_bear = 0.0
     holding_errors: dict[str, int] = {}
     max_pt_age = int(freshness.get("price_target_max_age_days", 45))
-    cached_count = 0
+    cached_equity_count = 0
+    shared_cache_hits = 0
     direct_finnhub_count = 0
+    analyzed_count = 0
 
     total_raw = sum(float(h.get("percent") or 0) for h in sorted_holdings)
     scale = 1.0 if total_raw <= 1.5 else 100.0
@@ -108,15 +111,20 @@ def build_issuer_etf_scenario(
             continue
         if not h_symbol or raw_weight <= 0:
             continue
+        analyzed_count += 1
         weight = raw_weight / scale
 
         scenario = _cached_equity_return(equity_scenarios.get(h_symbol))
         error = None
         if scenario is not None:
-            cached_count += 1
+            cached_equity_count += 1
         else:
-            scenario, error = _holding_scenario_return(h_symbol, finnhub, max_pt_age, as_of)
-            if scenario is not None:
+            (scenario, error), from_cache = _cached_holding_scenario_return(
+                h_symbol, finnhub, max_pt_age, as_of, constituent_cache
+            )
+            if from_cache:
+                shared_cache_hits += 1
+            elif scenario is not None:
                 direct_finnhub_count += 1
 
         if scenario is None:
@@ -174,8 +182,9 @@ def build_issuer_etf_scenario(
         "etf_holdings_age_days": holdings_age,
         "etf_lookthrough_covered_weight": covered_weight,
         "etf_valid_holding_count": valid_count,
-        "etf_analyzed_holding_count": valid_count + sum(holding_errors.values()),
-        "etf_cached_equity_count": cached_count,
+        "etf_analyzed_holding_count": analyzed_count,
+        "etf_cached_equity_count": cached_equity_count,
+        "etf_shared_constituent_cache_hits": shared_cache_hits,
         "etf_direct_finnhub_count": direct_finnhub_count,
         "holding_error_counts": holding_errors,
         "holdings_source_tier": snapshot.source_tier,
