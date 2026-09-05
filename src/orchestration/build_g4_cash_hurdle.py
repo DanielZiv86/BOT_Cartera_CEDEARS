@@ -130,15 +130,18 @@ def main() -> int:
         actionable = actionable.sort_values("net_benefit_vs_cash", ascending=False)
     actionable.to_json(out / "g4_ranked_actionable.json", orient="records", indent=2, force_ascii=False)
 
+    # Metrics may carry legacy methodology labels from the calculator. The policy
+    # file is the canonical methodology source, so write it after metrics to avoid
+    # accidental overwrite in the audit manifest.
     manifest = {
         "layer": "Valuation Engine + G4 Cash Hurdle",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "methodology_version": raw_policy.get("methodology_version", "G4-1.0"),
         "policy_file": args.policy,
         "valuation_input_file": args.valuation_inputs,
         "policy": raw_policy,
         "brokerage_rate_per_side": args.brokerage_rate,
         **metrics,
+        "methodology_version": raw_policy.get("methodology_version", "G4-1.0"),
     }
     (out / "g4_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(manifest, indent=2, ensure_ascii=False))
