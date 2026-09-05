@@ -26,7 +26,8 @@ class FinnhubConnector:
     token: str | None = None
     timeout: int = 30
     min_interval_seconds: float = 0.08
-    max_retries: int = 3
+    max_retries: int = 5
+    default_rate_limit_sleep_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         self.token = self.token or os.getenv("FINNHUB_TOKEN", "")
@@ -56,25 +57,36 @@ class FinnhubConnector:
                     f"{self.base_url}{endpoint}",
                     params={**params, "token": self.token},
                     timeout=self.timeout,
-                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.0"},
+                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.1"},
                 )
                 self._last_call = time.monotonic()
                 if response.status_code in {401, 403}:
                     raise FinnhubAccessDenied(f"FINNHUB_ACCESS_{response.status_code}")
                 if response.status_code == 429:
-                    raise FinnhubRateLimit("FINNHUB_RATE_LIMIT_429")
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after) if retry_after is not None else self.default_rate_limit_sleep_seconds
+                    except ValueError:
+                        delay = self.default_rate_limit_sleep_seconds
+                    last_error = FinnhubRateLimit("FINNHUB_RATE_LIMIT_429")
+                    if attempt >= self.max_retries - 1:
+                        raise last_error
+                    time.sleep(max(delay, self.default_rate_limit_sleep_seconds))
+                    continue
                 response.raise_for_status()
                 data = response.json()
                 self._cache[key] = data
                 return data
-            except FinnhubRateLimit as exc:
-                last_error = exc
-                time.sleep(min(2 ** attempt, 8))
             except FinnhubAccessDenied:
                 raise
+            except FinnhubRateLimit as exc:
+                last_error = exc
+                if attempt >= self.max_retries - 1:
+                    break
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
-                time.sleep(min(2 ** attempt, 4))
+                if attempt < self.max_retries - 1:
+                    time.sleep(min(2 ** attempt, 8))
         raise FinnhubError(str(last_error or "FINNHUB_REQUEST_FAILED"))
 
     def price_target(self, symbol: str) -> dict[str, Any]:
