@@ -1,4 +1,4 @@
-methodology_version: VAL-1.6
+methodology_version: VAL-1.7
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -10,8 +10,9 @@ quality:
   minimum_etf_covered_weight: 0.50
   minimum_etf_valid_holdings: 5
   maximum_etf_holdings_to_analyze: 50
-  maximum_direct_constituent_lookups_per_etf: 8
-  maximum_global_direct_constituent_lookups: 40
+  maximum_direct_constituent_lookups_per_etf: 12
+  preferred_global_direct_constituent_lookups: 40
+  maximum_global_direct_constituent_lookups: 60
 provider_fallbacks:
   finnhub_premium_etf_enabled: false
 instrument_overrides:
@@ -43,11 +44,13 @@ notes:
   - Broad-universe equity valuation uses Finnhub price-target consensus only; recommendation trends and fundamentals are deferred to Deep Research after G4/ranking shortlist.
   - Universe equity probabilities use the explicit policy prior so deferred enrichment cannot block or slow the 305-name coverage run.
   - Equity ETF scenarios use official issuer holdings and canonical equity scenarios first.
-  - Direct constituent valuation is a bounded shared fallback: at most 8 uncached constituents per ETF and 40 across the full run; successes and failures remain cached across funds.
-  - The bounded fallback prevents low-coverage foreign/broad ETFs from consuming hundreds of provider calls without a realistic path to the 50% look-through hurdle.
+  - ETF direct lookups are allocated by a deterministic marginal-coverage planner: funds closest to the 50% look-through hurdle with the fewest estimated uncached constituents are processed first instead of FIFO universe order.
+  - The preferred global direct-constituent budget is 40, while 60 is a hard cap that allows limited recovery when additional lookups can improve usable coverage without returning to the ~800-request regime.
+  - A maximum of 12 uncached constituents may be queried per ETF; successes and failures remain shared in the constituent cache across funds.
   - ETF look-through stops deterministically once minimum covered weight and minimum valid-holding count are both satisfied.
   - Finnhub Premium ETF endpoints are disabled for the current plan because real production calls returned 403; they can only be re-enabled explicitly by policy.
-  - Issuer-specific holdings freshness may override the 35-day default only when the issuer publishes on a slower documented cadence; the applied threshold is emitted in each ETF row.
+  - Issuer-specific holdings freshness may override the 35-day default when the issuer publishes on a slower documented cadence; the same fund-specific threshold is inherited by configured fallback sources and the applied threshold is emitted in each ETF row.
+  - Issuer downloads retry transport/read failures, including prematurely ended chunked responses observed on the IWDA UCITS page.
   - Secondary holdings sources are explicitly tagged and receive lower confidence; they never masquerade as issuer data.
   - GLD, IBIT and ETHA use a dedicated issuer-NAV + explicit asset stress-scenario model.
   - Non-equity stress assumptions are policy inputs, versioned separately and reviewed at least quarterly.
