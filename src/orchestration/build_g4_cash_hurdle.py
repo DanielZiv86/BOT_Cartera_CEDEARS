@@ -34,6 +34,17 @@ def _load_policy(path: str) -> tuple[G4Policy, dict]:
     ), raw
 
 
+def _load_valuation_inputs(path: str) -> pd.DataFrame:
+    p = Path(path)
+    if p.suffix.lower() == ".parquet":
+        return pd.read_parquet(p)
+    if p.suffix.lower() == ".csv":
+        return pd.read_csv(p)
+    if p.suffix.lower() == ".json":
+        return pd.read_json(p)
+    raise ValueError(f"Unsupported valuation input format: {p.suffix}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build deterministic Valuation + G4 Cash Hurdle layer")
     parser.add_argument("--local-market", required=True)
@@ -46,7 +57,7 @@ def main() -> int:
     args = parser.parse_args()
 
     local_market = pd.read_parquet(args.local_market)
-    valuation_inputs = pd.read_csv(args.valuation_inputs)
+    valuation_inputs = _load_valuation_inputs(args.valuation_inputs)
     portfolio_fit = pd.read_parquet(args.portfolio_fit)
     positions = pd.read_parquet(args.positions)
     policy, raw_policy = _load_policy(args.policy)
@@ -86,6 +97,7 @@ def main() -> int:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "methodology_version": raw_policy.get("methodology_version", "G4-1.0"),
         "policy_file": args.policy,
+        "valuation_input_file": args.valuation_inputs,
         "policy": raw_policy,
         "brokerage_rate_per_side": args.brokerage_rate,
         **metrics,
