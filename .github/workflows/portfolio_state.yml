@@ -2,6 +2,9 @@ name: Build Portfolio State Engine
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Risk and Correlation Engine"]
+    types: [completed]
   push:
     paths:
       - "data/input/portfolio_state_*.json"
@@ -19,6 +22,7 @@ permissions:
 
 jobs:
   build-portfolio-state:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
