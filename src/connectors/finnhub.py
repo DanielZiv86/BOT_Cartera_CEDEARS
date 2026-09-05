@@ -24,14 +24,13 @@ class FinnhubAccessDenied(FinnhubError):
 @dataclass
 class FinnhubConnector:
     token: str | None = None
-    timeout: int = 30
-    # Sustained pacing is intentionally conservative. The previous 0.08s
-    # interval caused bursty 429s on the configured Finnhub plan, followed by
-    # repeated 60s sleeps. ~1 request/sec is slower per request but materially
-    # faster and more deterministic end-to-end.
+    timeout: int = 15
+    # Conservative sustained cadence. If Finnhub still returns 429, perform one
+    # short bounded backoff and fail fast instead of sleeping for minutes.
     min_interval_seconds: float = 1.05
-    max_retries: int = 3
-    default_rate_limit_sleep_seconds: float = 60.0
+    max_retries: int = 2
+    default_rate_limit_sleep_seconds: float = 3.0
+    max_rate_limit_sleep_seconds: float = 10.0
 
     def __post_init__(self) -> None:
         self.token = self.token or os.getenv("FINNHUB_TOKEN", "")
@@ -41,6 +40,7 @@ class FinnhubConnector:
         self._request_count = 0
         self._cache_hit_count = 0
         self._rate_limit_count = 0
+        self._rate_limit_sleep_seconds_total = 0.0
 
     @property
     def configured(self) -> bool:
@@ -65,7 +65,7 @@ class FinnhubConnector:
                     f"{self.base_url}{endpoint}",
                     params={**params, "token": self.token},
                     timeout=self.timeout,
-                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.3"},
+                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.4"},
                 )
                 self._request_count += 1
                 self._last_call = time.monotonic()
@@ -75,13 +75,15 @@ class FinnhubConnector:
                     self._rate_limit_count += 1
                     retry_after = response.headers.get("Retry-After")
                     try:
-                        delay = float(retry_after) if retry_after is not None else self.default_rate_limit_sleep_seconds
+                        requested_delay = float(retry_after) if retry_after is not None else self.default_rate_limit_sleep_seconds
                     except ValueError:
-                        delay = self.default_rate_limit_sleep_seconds
+                        requested_delay = self.default_rate_limit_sleep_seconds
                     last_error = FinnhubRateLimit("FINNHUB_RATE_LIMIT_429")
                     if attempt >= self.max_retries - 1:
                         raise last_error
-                    time.sleep(max(delay, self.default_rate_limit_sleep_seconds))
+                    delay = max(self.min_interval_seconds, min(requested_delay, self.max_rate_limit_sleep_seconds))
+                    self._rate_limit_sleep_seconds_total += delay
+                    time.sleep(delay)
                     continue
                 response.raise_for_status()
                 data = response.json()
@@ -96,7 +98,7 @@ class FinnhubConnector:
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 if attempt < self.max_retries - 1:
-                    time.sleep(min(2 ** attempt, 8))
+                    time.sleep(min(2 ** attempt, 4))
         raise FinnhubError(str(last_error or "FINNHUB_REQUEST_FAILED"))
 
     def price_target(self, symbol: str) -> dict[str, Any]:
@@ -127,9 +129,12 @@ class FinnhubConnector:
         return {
             "configured": self.configured,
             "min_interval_seconds": self.min_interval_seconds,
+            "request_timeout_seconds": self.timeout,
+            "max_retries": self.max_retries,
             "request_count": self._request_count,
             "cache_hit_count": self._cache_hit_count,
             "rate_limit_429_count": self._rate_limit_count,
+            "rate_limit_sleep_seconds_total": round(self._rate_limit_sleep_seconds_total, 3),
         }
 
     @staticmethod
