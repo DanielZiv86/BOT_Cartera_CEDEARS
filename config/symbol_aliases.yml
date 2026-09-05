@@ -1,0 +1,37 @@
+mapping_version: "1.0"
+
+providers:
+  yahoo:
+    BRK/B: BRK-B
+    BRK.B: BRK-B
+    BRKB: BRK-B
+    AKO.B: AKO-B
+    VIST US: VIST
+    IWDA: IWDA.L
+  stooq:
+    BRK/B: BRK-B.US
+    BRK.B: BRK-B.US
+    BRKB: BRK-B.US
+    AKO.B: AKO-B.US
+    VIST US: VIST.US
+    IWDA: IWDA.UK
+  iol:
+    BRK/B: BRKB
+    BRK.B: BRKB
+    VIST US: VIST
+    IWDA: IWDA
+  data912:
+    BRK/B: BRK-B
+    BRK.B: BRK-B
+    VIST US: VIST
+    IWDA: IWDA
+
+market_suffixes:
+  yahoo:
+    EUROCLEAR: ".L"
+  stooq:
+    NYSE: ".US"
+    "NYSE ARCA": ".US"
+    "NASDAQ GS": ".US"
+    "NASDAQ GM": ".US"
+    "CBOE BZX": ".US"
