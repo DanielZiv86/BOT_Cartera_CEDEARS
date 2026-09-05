@@ -4,8 +4,27 @@ import argparse
 import json
 from pathlib import Path
 
+import yaml
+
 from src.universe.loader import eligible_universe_frame, load_universe_json, validate_universe
 from src.universe.symbol_map import build_symbol_map, load_alias_config
+
+
+def load_mandate_exclusions(path: str | Path | None) -> dict:
+    if not path:
+        return {"tickers": []}
+    file_path = Path(path)
+    if not file_path.exists():
+        return {"tickers": []}
+    with file_path.open("r", encoding="utf-8") as fh:
+        payload = yaml.safe_load(fh) or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Mandate exclusions config must be a mapping")
+    tickers = payload.get("tickers", [])
+    if not isinstance(tickers, list):
+        raise ValueError("Mandate exclusions 'tickers' must be a list")
+    payload["tickers"] = [str(t).strip().upper() for t in tickers if str(t).strip()]
+    return payload
 
 
 def main() -> None:
@@ -15,6 +34,11 @@ def main() -> None:
         "--aliases",
         default="config/symbol_aliases.yml",
         help="Provider symbol alias configuration",
+    )
+    parser.add_argument(
+        "--exclusions",
+        default="config/mandate_exclusions.yml",
+        help="Versioned user mandate exclusions",
     )
     parser.add_argument(
         "--output-dir",
@@ -28,7 +52,25 @@ def main() -> None:
     if not validation.is_valid or validation.errors:
         raise SystemExit("Universe validation failed:\n- " + "\n- ".join(validation.errors))
 
-    eligible = eligible_universe_frame(payload)
+    source_eligible = eligible_universe_frame(payload)
+    exclusion_cfg = load_mandate_exclusions(args.exclusions)
+    exclusion_set = set(exclusion_cfg.get("tickers", []))
+
+    present_tickers = set(source_eligible["cedear_ticker"].astype(str).str.upper())
+    unknown_exclusions = sorted(exclusion_set - present_tickers)
+    if unknown_exclusions:
+        raise SystemExit(
+            "Mandate exclusions contain tickers not present in source eligible universe: "
+            + ", ".join(unknown_exclusions)
+        )
+
+    canonical = source_eligible.copy()
+    canonical["user_mandate_excluded"] = canonical["cedear_ticker"].astype(str).str.upper().isin(exclusion_set)
+    canonical["user_mandate_exclusion_reason"] = canonical["user_mandate_excluded"].map(
+        lambda value: exclusion_cfg.get("reason_code", "USER_EXCLUDED_FROM_ANALYSIS") if value else None
+    )
+
+    eligible = canonical.loc[~canonical["user_mandate_excluded"]].copy().reset_index(drop=True)
     aliases = load_alias_config(args.aliases)
     symbol_map = build_symbol_map(eligible, aliases)
 
@@ -37,19 +79,28 @@ def main() -> None:
 
     universe_parquet = output_dir / "cedear_universe_master.parquet"
     universe_json = output_dir / "cedear_universe_master.json"
+    excluded_json = output_dir / "cedear_mandate_exclusions.json"
     symbol_parquet = output_dir / "security_symbol_map.parquet"
     symbol_json = output_dir / "security_symbol_map.json"
     manifest_path = output_dir / "universe_manifest.json"
 
     eligible.to_parquet(universe_parquet, index=False)
     eligible.to_json(universe_json, orient="records", indent=2, force_ascii=False)
+    canonical.loc[canonical["user_mandate_excluded"]].to_json(
+        excluded_json, orient="records", indent=2, force_ascii=False
+    )
     symbol_map.to_parquet(symbol_parquet, index=False)
     symbol_map.to_json(symbol_json, orient="records", indent=2, force_ascii=False)
 
+    excluded_tickers = sorted(exclusion_set)
     manifest = {
         "source_version": payload.get("version") or payload.get("Universe_Master_Version"),
         "declared_universe_count": payload.get("Universe_Count"),
-        "declared_eligible_count": payload.get("Eligible_Count"),
+        "source_declared_eligible_count": payload.get("Eligible_Count"),
+        "user_mandate_exclusion_version": exclusion_cfg.get("version"),
+        "user_mandate_exclusion_effective_date": exclusion_cfg.get("effective_date"),
+        "user_mandate_excluded_count": len(excluded_tickers),
+        "user_mandate_excluded_tickers": excluded_tickers,
         "canonical_eligible_count": int(len(eligible)),
         "symbol_map_count": int(len(symbol_map)),
         "mapping_version": aliases.get("mapping_version", "1.0"),
@@ -59,6 +110,7 @@ def main() -> None:
         "outputs": [
             str(universe_parquet),
             str(universe_json),
+            str(excluded_json),
             str(symbol_parquet),
             str(symbol_json),
         ],
