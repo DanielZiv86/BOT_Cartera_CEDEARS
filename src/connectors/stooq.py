@@ -9,7 +9,7 @@ import requests
 from .base import PriceQuote
 
 
-US_MARKET_MARKERS = ("NYSE", "NASDAQ", "CBOE")
+US_MARKET_MARKERS = ("NYSE", "NASDAQ", "CBOE", "NEW YORK")
 
 
 class StooqPriceConnector:
