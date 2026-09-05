@@ -23,6 +23,8 @@ class HoldingsSnapshot:
     source_tier: str
     provider: str
     retrieval_status: str = "READY"
+    freshness_max_age_days: int | None = None
+    max_holdings_to_analyze: int | None = None
 
 
 class IssuerHoldingsConnector:
@@ -32,7 +34,7 @@ class IssuerHoldingsConnector:
         self.sources = {str(k).upper(): v for k, v in (sources or {}).items()}
         self.timeout = timeout
         self.headers = {
-            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.1",
+            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.2",
             "Accept-Language": "en-US,en;q=0.9",
         }
 
@@ -76,6 +78,8 @@ class IssuerHoldingsConnector:
 
         if not holdings:
             raise IssuerHoldingsError("NO_HOLDINGS_PARSED")
+        freshness_override = cfg.get("max_age_days")
+        holdings_limit = cfg.get("max_holdings_to_analyze")
         return HoldingsSnapshot(
             ticker=ticker,
             holdings=holdings,
@@ -83,6 +87,8 @@ class IssuerHoldingsConnector:
             source_ref=url,
             source_tier=tier,
             provider=str(cfg.get("provider") or "UNKNOWN"),
+            freshness_max_age_days=int(freshness_override) if freshness_override is not None else None,
+            max_holdings_to_analyze=int(holdings_limit) if holdings_limit is not None else None,
         )
 
     def _get(self, url: str) -> requests.Response:
@@ -110,11 +116,9 @@ class IssuerHoldingsConnector:
         return holdings, as_of
 
     def _fetch_ishares_ucits_html(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
-        """Explicit adapter for iShares UCITS pages such as IWDA/SWDA.
-
-        UCITS pages expose a holdings table headed by Issuer Ticker and Weight (%),
-        rather than relying on the US .ajax CSV convention. We prefer the largest
-        normalized holdings table and use the freshest visible 'as of' date.
+        """Adapter for iShares UCITS pages whose server-rendered holdings table
+        exposes Issuer Ticker and Weight (%). The professional product page is
+        preferred for IWDA because it currently renders the full table in HTML.
         """
         response = self._get(url)
         text = response.text
@@ -151,7 +155,7 @@ class IssuerHoldingsConnector:
         lower = {str(c).strip().lower(): c for c in df.columns}
 
         ticker_col = next((orig for key, orig in lower.items() if key in {"ticker", "symbol", "issuer ticker"} or "ticker" in key), None)
-        weight_col = next((orig for key, orig in lower.items() if "weight" in key or "% of fund" in key or "% of net assets" in key or "holding percent" in key), None)
+        weight_col = next((orig for key, orig in lower.items() if "weight" in key or "% of fund" in key or "% of funds" in key or "% of net assets" in key or "holding percent" in key), None)
         if ticker_col is None or weight_col is None:
             return []
 
@@ -174,7 +178,7 @@ class IssuerHoldingsConnector:
     def _extract_date(text: str) -> str | None:
         patterns = [
             r"(?:as of|holdings as of|daily holdings .*? as of)\s*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
-            r"(?:as of|holdings as of)\s*(\d{1,2}/\d{1,2}/\d{4})",
+            r"(?:as of|holdings as of|daily holdings \(%\) as of)\s*(\d{1,2}/\d{1,2}/\d{4})",
             r"(?:as of|holdings as of)\s*(\d{4}-\d{2}-\d{2})",
             r"(?:as of|holdings as of)\s*(\d{1,2}/[A-Za-z]{3,9}/\d{4})",
         ]
