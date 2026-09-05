@@ -8,11 +8,15 @@ on:
   push:
     paths:
       - "src/connectors/finnhub.py"
+      - "src/connectors/issuer_holdings.py"
       - "src/valuation/equity_engine.py"
       - "src/valuation/etf_engine.py"
+      - "src/valuation/etf_issuer_engine.py"
       - "src/valuation/common.py"
       - "src/orchestration/build_valuation_scenarios.py"
       - "config/valuation_policy.yml"
+      - "config/etf_issuer_sources.yml"
+      - "requirements.txt"
       - "tests/test_valuation_engines.py"
       - ".github/workflows/valuation_scenarios.yml"
 
@@ -24,7 +28,7 @@ jobs:
   build-valuation-scenarios:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
@@ -67,6 +71,7 @@ jobs:
             --universe data/upstream_universe/cedear_universe_master.parquet \
             --underlying-prices data/upstream_prices/underlying_prices.parquet \
             --policy config/valuation_policy.yml \
+            --etf-sources config/etf_issuer_sources.yml \
             --output-dir data/canonical/valuation
 
       - name: Upload valuation artifacts
@@ -79,5 +84,3 @@ jobs:
             data/canonical/valuation/valuation_scenarios_metrics.json
           if-no-files-found: error
           retention-days: 90
-
-# Re-triggered after FINNHUB_TOKEN was configured on 2026-09-05.
