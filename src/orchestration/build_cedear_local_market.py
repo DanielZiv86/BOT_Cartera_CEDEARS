@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.connectors.comafi import ComafiRatioConnector
 from src.connectors.data912 import Data912CedearConnector
 from src.connectors.iol import IOLCedearConnector
 from src.market_data.cedear_local import build_local_market_layer, build_local_market_metrics
@@ -25,7 +26,11 @@ def main() -> int:
 
     iol = IOLCedearConnector()
     data912 = Data912CedearConnector()
+    comafi = ComafiRatioConnector()
+
     data912_panel = data912.get_panel()
+    ccl_panel = data912.get_ccl_panel()
+    ratio_panel = comafi.get_ratios()
 
     rows = []
     provider_stats = {"iol": 0, "data912": 0, "blocked": 0}
@@ -35,22 +40,35 @@ def main() -> int:
         if iol.configured:
             try:
                 quote = iol.get_quote(ticker)
-                attempts.append({"provider":"iol","status":"SUCCESS"})
+                attempts.append({"provider": "iol", "status": "SUCCESS"})
             except Exception as exc:
-                attempts.append({"provider":"iol","status":"ERROR","error":f"{type(exc).__name__}: {exc}"})
+                attempts.append({"provider": "iol", "status": "ERROR", "error": f"{type(exc).__name__}: {exc}"})
         else:
-            attempts.append({"provider":"iol","status":"SKIPPED_NOT_CONFIGURED"})
+            attempts.append({"provider": "iol", "status": "SKIPPED_NOT_CONFIGURED"})
 
         fallback = data912_panel.get(ticker)
         if quote is None or not quote.get("last_price_ars"):
             if fallback:
                 quote = dict(fallback)
-                attempts.append({"provider":"data912","status":"SUCCESS"})
+                attempts.append({"provider": "data912", "status": "SUCCESS"})
             else:
-                attempts.append({"provider":"data912","status":"NO_DATA"})
+                attempts.append({"provider": "data912", "status": "NO_DATA"})
 
         if quote is None:
-            quote = {"cedear_ticker":ticker,"last_price_ars":None,"bid_ars":None,"ask_ars":None,"nominal_volume":None,"cash_volume_ars":None,"market_timestamp":None,"provider":None,"provider_tier":None,"source_ref":None,"loaded_at":datetime.now(timezone.utc).isoformat(),"raw_keys":[]}
+            quote = {
+                "cedear_ticker": ticker,
+                "last_price_ars": None,
+                "bid_ars": None,
+                "ask_ars": None,
+                "nominal_volume": None,
+                "cash_volume_ars": None,
+                "market_timestamp": None,
+                "provider": None,
+                "provider_tier": None,
+                "source_ref": None,
+                "loaded_at": datetime.now(timezone.utc).isoformat(),
+                "raw_keys": [],
+            }
             provider_stats["blocked"] += 1
         else:
             provider_stats[quote["provider"]] = provider_stats.get(quote["provider"], 0) + 1
@@ -58,30 +76,59 @@ def main() -> int:
         rows.append(quote)
 
     local_quotes = pd.DataFrame(rows)
-    layer = build_local_market_layer(universe, underlying, local_quotes, brokerage_rate=args.brokerage_rate)
+    ratio_registry = pd.DataFrame(list(ratio_panel.values()))
+    ccl_reference = pd.DataFrame(list(ccl_panel.values()))
+
+    layer = build_local_market_layer(
+        universe,
+        underlying,
+        local_quotes,
+        ratio_registry=ratio_registry,
+        ccl_reference=ccl_reference,
+        brokerage_rate=args.brokerage_rate,
+    )
     metrics = build_local_market_metrics(layer)
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     layer.to_json(out / "cedear_local_market.json", orient="records", indent=2, force_ascii=False)
     parquet = layer.copy()
-    for col in ("raw_keys","attempt_log"):
+    for col in ("raw_keys", "attempt_log", "conflicting_ratio_texts"):
         if col in parquet.columns:
-            parquet[col] = parquet[col].map(lambda x: json.dumps(x, ensure_ascii=False))
+            parquet[col] = parquet[col].map(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, (list, dict)) else x)
     parquet.to_parquet(out / "cedear_local_market.parquet", index=False)
 
-    ccl = layer[[c for c in ["cedear_ticker","ratio","last_price_ars","bid_ars","ask_ars","mid_ars","last_close","currency","implied_ccl","spread_pct","roundtrip_friction_pct","provider","ccl_status"] if c in layer.columns]].copy()
+    ccl_cols = [
+        "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier", "ratio_used", "ratio_status",
+        "last_price_ars", "bid_ars", "ask_ars", "validated_mid_ars", "analytical_local_ref_ars", "last_close", "currency",
+        "implied_ccl", "ccl_reference_mark", "ccl_deviation_vs_data912_pct", "ccl_crosscheck_status", "ccl_status",
+        "spread_pct", "execution_book_status", "effective_executable_buy_ars", "effective_executable_sell_ars",
+        "executable_roundtrip_friction_pct", "reference_buy_with_commission_ars", "valuation_g4_local_gate", "provider",
+    ]
+    ccl = layer[[c for c in ccl_cols if c in layer.columns]].copy()
     ccl.to_json(out / "cedear_implied_ccl.json", orient="records", indent=2, force_ascii=False)
     ccl.to_parquet(out / "cedear_implied_ccl.parquet", index=False)
 
+    ratio_audit_cols = [
+        "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier",
+        "ratio_deviation_vs_universe_pct", "ratio_status", "comafi_source_ref",
+    ]
+    ratio_audit = layer[[c for c in ratio_audit_cols if c in layer.columns]].copy()
+    ratio_audit.to_json(out / "comafi_ratio_audit.json", orient="records", indent=2, force_ascii=False)
+    ratio_audit.to_parquet(out / "comafi_ratio_audit.parquet", index=False)
+
     manifest = {
-        "layer":"CEDEAR Local Market + Implied CCL",
-        "version":"1.0",
-        "created_at":datetime.now(timezone.utc).isoformat(),
-        "brokerage_rate_per_side":args.brokerage_rate,
-        "ratio_convention":"ratio = CEDEAR units per 1 underlying unit; implied_ccl = local_ARS * ratio / underlying_USD",
-        "provider_priority":["IOL","Data912"],
-        "provider_stats":provider_stats,
+        "layer": "CEDEAR Local Market + Implied CCL",
+        "version": "1.1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "brokerage_rate_per_side": args.brokerage_rate,
+        "ratio_convention": "Comafi ratio CEDEARs:underlying; multiplier = numerator/denominator; implied_ccl = local_ARS * multiplier / underlying_USD",
+        "provider_priority": ["IOL", "Data912"],
+        "ratio_primary_source": "Banco Comafi current CEDEAR program registry",
+        "ccl_crosscheck_source": "Data912 /live/ccl",
+        "provider_stats": provider_stats,
+        "comafi_ratio_registry_count": len(ratio_panel),
+        "data912_ccl_reference_count": len(ccl_panel),
         **metrics,
     }
     (out / "cedear_local_market_metrics.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
