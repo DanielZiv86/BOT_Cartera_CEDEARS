@@ -80,6 +80,9 @@ class EquityConnector:
 
 
 class ETFConnector:
+    def __init__(self):
+        self.quote_calls = []
+        self.target_calls = []
     def etf_profile(self, symbol):
         return {"profile": {"dividendYield": 2.0}}
     def etf_holdings(self, symbol):
@@ -89,8 +92,10 @@ class ETFConnector:
             {"symbol": "CCC", "percent": 20.0},
         ]}
     def quote(self, symbol):
+        self.quote_calls.append(symbol)
         return {"c": 100.0}
     def price_target(self, symbol):
+        self.target_calls.append(symbol)
         return {"targetHigh": 125.0, "targetMean": 115.0, "targetMedian": 114.0, "targetLow": 90.0, "numberAnalysts": 10, "lastUpdated": "2026-09-01"}
     def retrieved_at(self):
         return "2026-09-05T00:00:00+00:00"
@@ -151,6 +156,27 @@ def test_etf_lookthrough_ready_with_sufficient_fresh_coverage():
     assert row["valuation_status"] == "VALUATION_READY"
     assert row["etf_lookthrough_covered_weight"] >= 0.50
     assert row["bear_target_price"] < row["base_target_price"] < row["bull_target_price"]
+
+
+def test_etf_early_stop_avoids_unnecessary_constituent_calls():
+    connector = ETFConnector()
+    row = build_etf_scenario("ETF1", 100.0, connector, POLICY, as_of=date(2026, 9, 5), constituent_cache={})
+    assert row["valuation_status"] == "VALUATION_READY"
+    assert connector.quote_calls == ["AAA", "BBB"]
+    assert connector.target_calls == ["AAA", "BBB"]
+    assert row["etf_analyzed_holding_count"] == 2
+
+
+def test_etf_shared_cache_reuses_constituents_across_funds():
+    connector = ETFConnector()
+    cache = {}
+    first = build_etf_scenario("ETF1", 100.0, connector, POLICY, as_of=date(2026, 9, 5), constituent_cache=cache)
+    second = build_etf_scenario("ETF2", 100.0, connector, POLICY, as_of=date(2026, 9, 5), constituent_cache=cache)
+    assert first["valuation_status"] == "VALUATION_READY"
+    assert second["valuation_status"] == "VALUATION_READY"
+    assert connector.quote_calls == ["AAA", "BBB"]
+    assert connector.target_calls == ["AAA", "BBB"]
+    assert second["etf_shared_constituent_cache_hits"] == 2
 
 
 def test_issuer_fallback_ready_with_official_holdings():
