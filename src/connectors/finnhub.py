@@ -25,8 +25,12 @@ class FinnhubAccessDenied(FinnhubError):
 class FinnhubConnector:
     token: str | None = None
     timeout: int = 30
-    min_interval_seconds: float = 0.08
-    max_retries: int = 5
+    # Sustained pacing is intentionally conservative. The previous 0.08s
+    # interval caused bursty 429s on the configured Finnhub plan, followed by
+    # repeated 60s sleeps. ~1 request/sec is slower per request but materially
+    # faster and more deterministic end-to-end.
+    min_interval_seconds: float = 1.05
+    max_retries: int = 3
     default_rate_limit_sleep_seconds: float = 60.0
 
     def __post_init__(self) -> None:
@@ -34,6 +38,9 @@ class FinnhubConnector:
         self.base_url = "https://finnhub.io/api/v1"
         self._cache: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = {}
         self._last_call = 0.0
+        self._request_count = 0
+        self._cache_hit_count = 0
+        self._rate_limit_count = 0
 
     @property
     def configured(self) -> bool:
@@ -44,6 +51,7 @@ class FinnhubConnector:
             raise FinnhubAccessDenied("FINNHUB_TOKEN_NOT_CONFIGURED")
         key = (endpoint, tuple(sorted(params.items())))
         if key in self._cache:
+            self._cache_hit_count += 1
             return self._cache[key]
 
         elapsed = time.monotonic() - self._last_call
@@ -57,12 +65,14 @@ class FinnhubConnector:
                     f"{self.base_url}{endpoint}",
                     params={**params, "token": self.token},
                     timeout=self.timeout,
-                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.1"},
+                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.3"},
                 )
+                self._request_count += 1
                 self._last_call = time.monotonic()
                 if response.status_code in {401, 403}:
                     raise FinnhubAccessDenied(f"FINNHUB_ACCESS_{response.status_code}")
                 if response.status_code == 429:
+                    self._rate_limit_count += 1
                     retry_after = response.headers.get("Retry-After")
                     try:
                         delay = float(retry_after) if retry_after is not None else self.default_rate_limit_sleep_seconds
@@ -112,6 +122,15 @@ class FinnhubConnector:
     def etf_holdings(self, symbol: str) -> dict[str, Any]:
         data = self._get("/etf/holdings", symbol=symbol)
         return data if isinstance(data, dict) else {}
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "min_interval_seconds": self.min_interval_seconds,
+            "request_count": self._request_count,
+            "cache_hit_count": self._cache_hit_count,
+            "rate_limit_429_count": self._rate_limit_count,
+        }
 
     @staticmethod
     def retrieved_at() -> str:
