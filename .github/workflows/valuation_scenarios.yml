@@ -79,3 +79,5 @@ jobs:
             data/canonical/valuation/valuation_scenarios_metrics.json
           if-no-files-found: error
           retention-days: 90
+
+# Re-triggered after FINNHUB_TOKEN was configured on 2026-09-05.
