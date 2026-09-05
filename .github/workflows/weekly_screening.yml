@@ -1,0 +1,27 @@
+name: Weekly Screening Placeholder
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Placeholder: Saturdays at 12:00 UTC ~= 09:00 Argentina (UTC-3)
+    - cron: '0 12 * * 6'
+
+jobs:
+  weekly-screening:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Placeholder only
+        run: |
+          echo "Weekly screening workflow scaffold is active."
+          echo "Screening calculations are intentionally not implemented yet."
