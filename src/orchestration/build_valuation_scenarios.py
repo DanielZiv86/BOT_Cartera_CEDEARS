@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,6 +53,33 @@ def _load_issuer_sources(path: str) -> dict:
                 "url": secondary_template.format(ticker=str(ticker).lower()),
             }
     return sources
+
+
+def _blocker_diagnostics(result: pd.DataFrame) -> tuple[dict[str, int], dict[str, list[str]]]:
+    counts: Counter[str] = Counter()
+    tickers: defaultdict[str, list[str]] = defaultdict(list)
+    if result.empty or "blockers" not in result.columns:
+        return {}, {}
+    for _, row in result.iterrows():
+        ticker = str(row.get("cedear_ticker") or row.get("underlying_ticker") or "UNKNOWN")
+        blockers = row.get("blockers")
+        if isinstance(blockers, str):
+            try:
+                parsed = json.loads(blockers)
+                blockers = parsed if isinstance(parsed, list) else [blockers]
+            except json.JSONDecodeError:
+                blockers = [blockers]
+        if not isinstance(blockers, list):
+            continue
+        for blocker in blockers:
+            code = str(blocker).strip()
+            if not code:
+                continue
+            counts[code] += 1
+            tickers[code].append(ticker)
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))), {
+        code: sorted(set(names)) for code, names in sorted(tickers.items())
+    }
 
 
 def main() -> int:
@@ -151,6 +179,8 @@ def main() -> int:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    blocker_counts, blocker_tickers = _blocker_diagnostics(result)
+
     json_df = result.copy()
     for col in ("blockers", "holding_error_counts"):
         if col in json_df.columns:
@@ -174,6 +204,7 @@ def main() -> int:
         "methodology_version": policy.get("methodology_version", "VAL-1.0"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "finnhub_configured": finnhub.configured,
+        "finnhub_diagnostics": finnhub.diagnostics(),
         "ticker_count": int(len(result)),
         "equity_count": equity_count,
         "etf_count": etf_count,
@@ -187,10 +218,12 @@ def main() -> int:
         "etf_cached_constituent_valuations_used": cached_constituents,
         "etf_direct_finnhub_constituent_valuations_used": direct_constituents,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
+        "blocker_counts": blocker_counts,
+        "blocker_tickers": blocker_tickers,
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA.",
+        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA. Blockers are exported by code and ticker for deterministic remediation.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
