@@ -2,6 +2,9 @@ name: Build Underlying Price Layer
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Universe Master and Symbol Map"]
+    types: [completed]
   schedule:
     - cron: "30 22 * * 1-5"
   push:
@@ -18,6 +21,7 @@ permissions:
 
 jobs:
   build-underlying-prices:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
