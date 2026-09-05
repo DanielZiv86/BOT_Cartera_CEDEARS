@@ -1,4 +1,4 @@
-methodology_version: VAL-1.5
+methodology_version: VAL-1.6
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -10,6 +10,10 @@ quality:
   minimum_etf_covered_weight: 0.50
   minimum_etf_valid_holdings: 5
   maximum_etf_holdings_to_analyze: 50
+  maximum_direct_constituent_lookups_per_etf: 8
+  maximum_global_direct_constituent_lookups: 40
+provider_fallbacks:
+  finnhub_premium_etf_enabled: false
 instrument_overrides:
   etf_like_tickers:
     - GLD
@@ -38,10 +42,12 @@ status_policy:
 notes:
   - Broad-universe equity valuation uses Finnhub price-target consensus only; recommendation trends and fundamentals are deferred to Deep Research after G4/ranking shortlist.
   - Universe equity probabilities use the explicit policy prior so deferred enrichment cannot block or slow the 305-name coverage run.
-  - Equity ETF scenarios use official issuer holdings plus canonical equity scenarios first, then one shared lazy constituent valuation cache across all ETFs.
-  - Constituent successes and failures are cached once per run so repeated ETF holdings never cause duplicate Finnhub valuation calls.
+  - Equity ETF scenarios use official issuer holdings and canonical equity scenarios first.
+  - Direct constituent valuation is a bounded shared fallback: at most 8 uncached constituents per ETF and 40 across the full run; successes and failures remain cached across funds.
+  - The bounded fallback prevents low-coverage foreign/broad ETFs from consuming hundreds of provider calls without a realistic path to the 50% look-through hurdle.
   - ETF look-through stops deterministically once minimum covered weight and minimum valid-holding count are both satisfied.
-  - Finnhub uses conservative sustained pacing with bounded short 429 backoff; long 60-second retry sleeps are prohibited.
+  - Finnhub Premium ETF endpoints are disabled for the current plan because real production calls returned 403; they can only be re-enabled explicitly by policy.
+  - Issuer-specific holdings freshness may override the 35-day default only when the issuer publishes on a slower documented cadence; the applied threshold is emitted in each ETF row.
   - Secondary holdings sources are explicitly tagged and receive lower confidence; they never masquerade as issuer data.
   - GLD, IBIT and ETHA use a dedicated issuer-NAV + explicit asset stress-scenario model.
   - Non-equity stress assumptions are policy inputs, versioned separately and reviewed at least quarterly.
