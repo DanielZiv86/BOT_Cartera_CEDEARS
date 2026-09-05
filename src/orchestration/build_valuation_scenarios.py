@@ -6,12 +6,13 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import yaml
 
 from src.connectors.finnhub import FinnhubConnector
-from src.connectors.issuer_holdings import IssuerHoldingsConnector
+from src.connectors.issuer_holdings import HoldingsSnapshot, IssuerHoldingsConnector, IssuerHoldingsError
 from src.connectors.non_equity_tracker import NonEquityTrackerConnector
 from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import ConstituentScenario, build_etf_scenario
@@ -53,6 +54,72 @@ def _load_issuer_sources(path: str) -> dict:
                 "url": secondary_template.format(ticker=str(ticker).lower()),
             }
     return sources
+
+
+def _ready_equity(row: dict[str, Any] | None) -> bool:
+    return bool(row and row.get("valuation_status") == "VALUATION_READY")
+
+
+def _estimate_etf_plan(snapshot: HoldingsSnapshot, equity_scenarios: dict[str, dict], policy: dict) -> dict[str, Any]:
+    """Estimate how many uncached constituent lookups could make an ETF cross the hurdle.
+
+    This is deliberately deterministic and provider-call free. It lets the global
+    budget favor funds that are closest to becoming usable instead of allocating
+    scarce calls in universe/FIFO order.
+    """
+    quality = policy.get("quality", {}) or {}
+    min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
+    min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
+    default_limit = int(quality.get("maximum_etf_holdings_to_analyze", 50))
+    per_fund_cap = int(quality.get("maximum_direct_constituent_lookups_per_etf", 12))
+    max_holdings = snapshot.max_holdings_to_analyze or default_limit
+    holdings = sorted(snapshot.holdings, key=lambda x: float(x.get("percent") or 0), reverse=True)[:max_holdings]
+    total_raw = sum(float(h.get("percent") or 0) for h in holdings)
+    scale = 1.0 if total_raw <= 1.5 else 100.0
+
+    cached_weight = 0.0
+    cached_count = 0
+    missing_weights: list[float] = []
+    for holding in holdings:
+        symbol = str(holding.get("symbol") or "").strip().upper()
+        try:
+            weight = float(holding.get("percent") or 0) / scale
+        except (TypeError, ValueError):
+            continue
+        if not symbol or weight <= 0:
+            continue
+        if _ready_equity(equity_scenarios.get(symbol)):
+            cached_weight += weight
+            cached_count += 1
+        else:
+            missing_weights.append(weight)
+
+    if cached_weight >= min_covered and cached_count >= min_valid:
+        needed = 0
+        feasible = True
+    else:
+        running_weight = cached_weight
+        running_count = cached_count
+        needed = 0
+        feasible = False
+        for weight in missing_weights:
+            needed += 1
+            running_weight += weight
+            running_count += 1
+            if running_weight >= min_covered and running_count >= min_valid:
+                feasible = needed <= per_fund_cap
+                break
+        if needed > per_fund_cap:
+            feasible = False
+
+    return {
+        "cached_weight": cached_weight,
+        "cached_count": cached_count,
+        "uncached_count": len(missing_weights),
+        "estimated_lookups_needed": needed if feasible else per_fund_cap + 1,
+        "estimated_feasible_within_per_fund_cap": feasible,
+        "coverage_gap": max(0.0, min_covered - cached_weight),
+    }
 
 
 def _blocker_diagnostics(result: pd.DataFrame) -> tuple[dict[str, int], dict[str, list[str]]]:
@@ -110,7 +177,8 @@ def main() -> int:
     equity_scenarios: dict[str, dict] = {}
     constituent_cache: dict[str, ConstituentScenario] = {}
     quality = policy.get("quality", {}) or {}
-    global_direct_limit = int(quality.get("maximum_global_direct_constituent_lookups", 40))
+    global_direct_limit = int(quality.get("maximum_global_direct_constituent_lookups", 60))
+    preferred_direct_limit = int(quality.get("preferred_global_direct_constituent_lookups", min(40, global_direct_limit)))
     direct_lookup_budget = {"initial": global_direct_limit, "remaining": global_direct_limit}
     provider_fallbacks = policy.get("provider_fallbacks", {}) or {}
     premium_etf_fallback_enabled = bool(provider_fallbacks.get("finnhub_premium_etf_enabled", False))
@@ -120,6 +188,7 @@ def main() -> int:
     finnhub_etf_ready_count = 0
     non_equity_ready_count = 0
 
+    # Stage 1: all canonical equities first so ETF planning can reuse every ready valuation.
     for item, is_etf in classified:
         if is_etf:
             continue
@@ -138,14 +207,60 @@ def main() -> int:
         equity_count += 1
 
     non_equity = {str(t).upper() for t in policy.get("instrument_overrides", {}).get("non_equity_trackers", [])}
+
+    # Stage 2: prefetch issuer snapshots once and estimate marginal calls needed.
+    etf_work: list[dict[str, Any]] = []
     for item, is_etf in classified:
         if not is_etf:
             continue
         cedear = str(item.get("cedear_ticker") or "").upper()
         underlying = str(item.get("underlying_ticker") or cedear).upper()
+        if underlying in non_equity:
+            etf_work.append({"item": item, "cedear": cedear, "underlying": underlying, "snapshot": None, "plan": None, "non_equity": True})
+            continue
+        snapshot = None
+        fetch_error = None
+        try:
+            snapshot = issuer_holdings.fetch(underlying)
+        except IssuerHoldingsError as exc:
+            fetch_error = str(exc)
+        plan = _estimate_etf_plan(snapshot, equity_scenarios, policy) if snapshot is not None else {
+            "cached_weight": 0.0,
+            "cached_count": 0,
+            "uncached_count": 0,
+            "estimated_lookups_needed": 10**6,
+            "estimated_feasible_within_per_fund_cap": False,
+            "coverage_gap": 1.0,
+        }
+        etf_work.append({
+            "item": item,
+            "cedear": cedear,
+            "underlying": underlying,
+            "snapshot": snapshot,
+            "fetch_error": fetch_error,
+            "plan": plan,
+            "non_equity": False,
+        })
+
+    # Dedicated non-equity models first; issuer equity ETFs are then ordered by
+    # cheapest expected path to the 50% hurdle, not by ticker/FIFO order.
+    issuer_work = [w for w in etf_work if not w["non_equity"]]
+    issuer_work.sort(key=lambda w: (
+        0 if w["plan"].get("estimated_feasible_within_per_fund_cap") else 1,
+        int(w["plan"].get("estimated_lookups_needed", 10**6)),
+        float(w["plan"].get("coverage_gap", 1.0)),
+        w["underlying"],
+    ))
+    ordered_work = [w for w in etf_work if w["non_equity"]] + issuer_work
+
+    planner_order: list[dict[str, Any]] = []
+    for work in ordered_work:
+        item = work["item"]
+        cedear = work["cedear"]
+        underlying = work["underlying"]
         current_price = prices_by_cedear.get(cedear)
 
-        if underlying in non_equity:
+        if work["non_equity"]:
             scenario = build_non_equity_tracker_scenario(
                 underlying,
                 current_price,
@@ -155,6 +270,7 @@ def main() -> int:
             if scenario.get("valuation_status") == "VALUATION_READY":
                 non_equity_ready_count += 1
         else:
+            before = direct_lookup_budget["remaining"]
             scenario = build_issuer_etf_scenario(
                 underlying,
                 current_price,
@@ -164,7 +280,17 @@ def main() -> int:
                 equity_scenarios=equity_scenarios,
                 constituent_cache=constituent_cache,
                 direct_lookup_budget=direct_lookup_budget,
+                holdings_snapshot=work.get("snapshot"),
             )
+            used = before - direct_lookup_budget["remaining"]
+            planner_order.append({
+                "ticker": underlying,
+                "estimated_lookups_needed": work["plan"].get("estimated_lookups_needed"),
+                "estimated_feasible": work["plan"].get("estimated_feasible_within_per_fund_cap"),
+                "cached_weight_estimate": round(float(work["plan"].get("cached_weight", 0.0)), 6),
+                "actual_direct_lookups_used": used,
+                "valuation_status": scenario.get("valuation_status"),
+            })
             if scenario.get("valuation_status") == "VALUATION_READY":
                 issuer_ready_count += 1
             elif premium_etf_fallback_enabled:
@@ -237,15 +363,18 @@ def main() -> int:
         "etf_shared_constituent_cache_hits": shared_cache_hits,
         "etf_unique_constituents_cached": len(constituent_cache),
         "etf_direct_finnhub_constituent_lookups": direct_constituents,
+        "etf_direct_lookup_budget_preferred": preferred_direct_limit,
         "etf_direct_lookup_budget_initial": direct_lookup_budget["initial"],
         "etf_direct_lookup_budget_remaining": direct_lookup_budget["remaining"],
+        "etf_budget_allocation_strategy": "MARGINAL_COVERAGE_EFFICIENCY_V1",
+        "etf_planner_order": planner_order,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "blocker_counts": blocker_counts,
         "blocker_tickers": blocker_tickers,
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "Operating equities use Finnhub price-target screening; equity ETFs use issuer look-through, canonical equity scenarios first, a bounded shared direct-constituent budget, and deterministic early-stop. Finnhub Premium ETF fallback is disabled unless explicitly enabled. GLD/IBIT/ETHA use dedicated issuer-NAV stress models.",
+        "note": "VAL-1.7 preplans issuer ETFs by marginal coverage efficiency, reuses all canonical equity scenarios, applies a bounded shared direct-constituent hard cap, inherits fund-specific freshness across fallbacks, and retries fragile issuer transport. Finnhub Premium ETF fallback remains opt-in only. GLD/IBIT/ETHA use dedicated issuer-NAV stress models.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
