@@ -45,6 +45,24 @@ def _load_valuation_inputs(path: str) -> pd.DataFrame:
     raise ValueError(f"Unsupported valuation input format: {p.suffix}")
 
 
+def _apply_global_governance(metrics: dict) -> dict:
+    governed = dict(metrics)
+    blocked = int(governed.get("blocked_count", 0) or 0)
+    passes = int(governed.get("pass_count", 0) or 0)
+    total = int(governed.get("ticker_count", 0) or 0)
+
+    if total == 0 or blocked > 0:
+        governed["deployment_decision"] = "RESEARCH_BLOCKED"
+        governed["ranking_status"] = "PARTIAL_NOT_ACTIONABLE"
+    elif passes > 0:
+        governed["deployment_decision"] = "ALLOW_NEW_DEPLOYMENT"
+        governed["ranking_status"] = "COMPLETE_ACTIONABLE"
+    else:
+        governed["deployment_decision"] = "NO_NEW_DEPLOYMENT"
+        governed["ranking_status"] = "COMPLETE_ACTIONABLE"
+    return governed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build deterministic Valuation + G4 Cash Hurdle layer")
     parser.add_argument("--local-market", required=True)
@@ -70,6 +88,7 @@ def main() -> int:
         policy=policy,
         brokerage_rate=args.brokerage_rate,
     )
+    metrics = _apply_global_governance(metrics)
 
     if not result.empty and "g4_rank" in result.columns:
         result.loc[result["g4_status"] == "BLOCKED_BY_DATA", "g4_rank"] = pd.NA
