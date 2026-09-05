@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from src.connectors.issuer_holdings import HoldingsSnapshot
+from src.orchestration.build_valuation_scenarios import _is_etf
 from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import build_etf_scenario
+from src.valuation.etf_issuer_engine import build_issuer_etf_scenario
 
 
 POLICY = {
@@ -18,6 +21,10 @@ POLICY = {
         "minimum_etf_covered_weight": 0.50,
         "minimum_etf_valid_holdings": 2,
         "maximum_etf_holdings_to_analyze": 10,
+    },
+    "instrument_overrides": {
+        "etf_like_tickers": ["GLD", "IBIT", "ETHA"],
+        "non_equity_trackers": ["GLD", "IBIT", "ETHA"],
     },
     "probabilities": {
         "prior_bull": 0.25,
@@ -65,6 +72,24 @@ class ETFConnector:
         return "2026-09-05T00:00:00+00:00"
 
 
+class IssuerConnector:
+    def fetch(self, symbol):
+        return HoldingsSnapshot(
+            ticker=symbol,
+            holdings=[
+                {"symbol": "AAA", "percent": 35.0},
+                {"symbol": "BBB", "percent": 25.0},
+                {"symbol": "CCC", "percent": 20.0},
+            ],
+            as_of="2026-09-01",
+            source_ref="https://issuer.example/fund",
+            source_tier="ISSUER_OFFICIAL",
+            provider="Issuer",
+        )
+    def retrieved_at(self):
+        return "2026-09-05T00:00:00+00:00"
+
+
 def test_equity_ready_when_consensus_is_fresh():
     row = build_equity_scenario("AAA", 100.0, EquityConnector(), POLICY, as_of=date(2026, 9, 5))
     assert row["valuation_status"] == "VALUATION_READY"
@@ -86,3 +111,22 @@ def test_etf_lookthrough_ready_with_sufficient_fresh_coverage():
     assert row["valuation_status"] == "VALUATION_READY"
     assert row["etf_lookthrough_covered_weight"] >= 0.50
     assert row["bear_target_price"] < row["base_target_price"] < row["bull_target_price"]
+
+
+def test_issuer_fallback_ready_with_official_holdings():
+    row = build_issuer_etf_scenario("ETF1", 100.0, ETFConnector(), IssuerConnector(), POLICY, as_of=date(2026, 9, 5))
+    assert row["valuation_status"] == "VALUATION_READY"
+    assert row["valuation_method"] == "ISSUER_HOLDINGS_LOOKTHROUGH_V1"
+    assert row["holdings_source_tier"] == "ISSUER_OFFICIAL"
+    assert row["etf_lookthrough_covered_weight"] >= 0.50
+
+
+def test_non_equity_tracker_is_not_forced_through_equity_holdings():
+    row = build_issuer_etf_scenario("IBIT", 100.0, ETFConnector(), IssuerConnector(), POLICY, as_of=date(2026, 9, 5))
+    assert row["valuation_status"] == "BLOCKED_BY_DATA"
+    assert "NON_EQUITY_TRACKER_NOT_ELIGIBLE_FOR_EQUITY_LOOKTHROUGH" in row["blockers"]
+
+
+def test_netflix_is_not_misclassified_as_etf_by_substring():
+    assert _is_etf("NFLX", "Acción", "Netflix Inc", POLICY) is False
+    assert _is_etf("SPY", "ETF tradicional", "SPDR S&P 500 ETF Trust", POLICY) is True
