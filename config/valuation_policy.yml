@@ -1,4 +1,4 @@
-methodology_version: VAL-1.3
+methodology_version: VAL-1.4
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -37,7 +37,10 @@ status_policy:
   missing_material_input: BLOCKED_BY_DATA
 notes:
   - Equity scenarios use Finnhub analyst price-target high/mean/low and recommendation trends.
-  - Equity ETF scenarios use official issuer holdings plus cached/direct Finnhub constituent valuation.
+  - Equity ETF scenarios use official issuer holdings plus canonical equity scenarios first, then one shared lazy constituent valuation cache across all ETFs.
+  - Constituent successes and failures are cached once per run so repeated ETF holdings never cause duplicate Finnhub valuation calls.
+  - ETF look-through stops deterministically once minimum covered weight and minimum valid-holding count are both satisfied.
+  - Finnhub uses conservative sustained pacing with bounded short 429 backoff; long 60-second retry sleeps are prohibited.
   - Secondary holdings sources are explicitly tagged and receive lower confidence; they never masquerade as issuer data.
   - GLD, IBIT and ETHA use a dedicated issuer-NAV + explicit asset stress-scenario model.
   - Non-equity stress assumptions are policy inputs, versioned separately and reviewed at least quarterly.
