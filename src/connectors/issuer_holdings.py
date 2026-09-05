@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import io
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class IssuerHoldingsError(RuntimeError):
@@ -34,32 +37,66 @@ class IssuerHoldingsConnector:
         self.sources = {str(k).upper(): v for k, v in (sources or {}).items()}
         self.timeout = timeout
         self.headers = {
-            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.2",
+            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.3",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            status=3,
+            backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            respect_retry_after_header=True,
+        )
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+        self.session.mount("http://", HTTPAdapter(max_retries=retry))
+        self._cache: dict[str, HoldingsSnapshot] = {}
+        self._errors: dict[str, str] = {}
 
     def fetch(self, ticker: str) -> HoldingsSnapshot:
         symbol = ticker.upper()
+        if symbol in self._cache:
+            return self._cache[symbol]
+        if symbol in self._errors:
+            raise IssuerHoldingsError(self._errors[symbol])
+
         cfg = self.sources.get(symbol)
         if not isinstance(cfg, dict):
             raise IssuerHoldingsError("ISSUER_SOURCE_NOT_CONFIGURED")
 
         attempts: list[str] = []
         primary = cfg.get("primary")
+        primary_meta = primary if isinstance(primary, dict) else {}
         if isinstance(primary, dict):
             try:
-                return self._fetch_source(symbol, primary, "ISSUER_OFFICIAL")
+                snapshot = self._fetch_source(symbol, primary, "ISSUER_OFFICIAL")
+                self._cache[symbol] = snapshot
+                return snapshot
             except Exception as exc:  # noqa: BLE001
                 attempts.append(f"PRIMARY:{type(exc).__name__}:{exc}")
 
         secondary = cfg.get("secondary")
         if isinstance(secondary, dict):
+            inherited = dict(secondary)
+            # A fallback is a transport/provider substitute for the same fund.
+            # Preserve fund-specific cadence/analysis limits unless explicitly overridden.
+            for key in ("max_age_days", "max_holdings_to_analyze"):
+                if inherited.get(key) is None and primary_meta.get(key) is not None:
+                    inherited[key] = primary_meta[key]
             try:
-                return self._fetch_source(symbol, secondary, "SECONDARY_HOLDINGS_FALLBACK")
+                snapshot = self._fetch_source(symbol, inherited, "SECONDARY_HOLDINGS_FALLBACK")
+                self._cache[symbol] = snapshot
+                return snapshot
             except Exception as exc:  # noqa: BLE001
                 attempts.append(f"SECONDARY:{type(exc).__name__}:{exc}")
 
-        raise IssuerHoldingsError(";".join(attempts) or "NO_USABLE_HOLDINGS_SOURCE")
+        message = ";".join(attempts) or "NO_USABLE_HOLDINGS_SOURCE"
+        self._errors[symbol] = message
+        raise IssuerHoldingsError(message)
 
     def _fetch_source(self, ticker: str, cfg: dict[str, Any], tier: str) -> HoldingsSnapshot:
         mode = str(cfg.get("mode") or "html_table").lower()
@@ -92,9 +129,23 @@ class IssuerHoldingsConnector:
         )
 
     def _get(self, url: str) -> requests.Response:
-        response = requests.get(url, timeout=self.timeout, headers=self.headers)
-        response.raise_for_status()
-        return response
+        # requests/urllib3 retries status/connect failures, but a prematurely-ended
+        # chunked body may surface while content is consumed. Consume inside the
+        # retry loop so UCITS issuer pages such as IWDA get a clean retry.
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self.session.get(url, timeout=self.timeout)
+                response.raise_for_status()
+                _ = response.content
+                return response
+            except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                last_exc = exc
+                if attempt < 3:
+                    time.sleep(float(attempt))
+        if last_exc is not None:
+            raise last_exc
+        raise IssuerHoldingsError("HTTP_RETRIEVAL_FAILED")
 
     def _fetch_ishares_csv(self, product_url: str, ticker: str) -> tuple[list[dict[str, Any]], str | None]:
         base = product_url.rstrip("/")
@@ -116,10 +167,6 @@ class IssuerHoldingsConnector:
         return holdings, as_of
 
     def _fetch_ishares_ucits_html(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
-        """Adapter for iShares UCITS pages whose server-rendered holdings table
-        exposes Issuer Ticker and Weight (%). The professional product page is
-        preferred for IWDA because it currently renders the full table in HTML.
-        """
         response = self._get(url)
         text = response.text
         tables = pd.read_html(io.StringIO(text))
