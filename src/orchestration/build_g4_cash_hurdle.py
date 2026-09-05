@@ -60,6 +60,9 @@ def main() -> int:
         brokerage_rate=args.brokerage_rate,
     )
 
+    if not result.empty and "g4_rank" in result.columns:
+        result.loc[result["g4_status"] == "BLOCKED_BY_DATA", "g4_rank"] = pd.NA
+
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
