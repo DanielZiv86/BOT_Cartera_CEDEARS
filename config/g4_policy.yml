@@ -1,0 +1,35 @@
+methodology_version: G4-1.0
+horizon_months: 12
+return_currency: USD_ECONOMIC_RETURN
+
+cash_hurdle:
+  cash_return_assumption: 0.00
+  minimum_excess_return_over_cash: 0.05
+  capital_preservation_buffer: 0.03
+  minimum_margin_over_hurdle: 0.02
+
+risk:
+  max_bear_downside: -0.15
+  candidate_test_weight_nav: 0.05
+  soft_single_name_weight: 0.12
+  warning_single_name_weight: 0.15
+  max_single_name_weight: 0.20
+  correlation_warning: 0.75
+
+penalties:
+  uncertainty_penalty_max: 0.10
+  local_warning_penalty: 0.02
+  correlation_penalty_max: 0.03
+  concentration_penalty_max: 0.03
+
+execution:
+  brokerage_rate_per_side: 0.006
+  analytical_g4_is_separate_from_execution_ready: true
+
+policy_notes:
+  - Bull/Base/Bear probabilities must sum to 1.0.
+  - Missing material valuation, local-market, ratio, CCL, confidence, or portfolio-fit data blocks G4 for that ticker.
+  - Scenario returns are net of brokerage and a conservative spread assumption when a valid spread is available.
+  - G4_PASS requires NetBenefit_vs_Cash >= minimum_margin_over_hurdle and Bear_Return_Net >= max_bear_downside.
+  - A projected single-name weight above 20% is a hard G4 concentration failure.
+  - Cash optimality is NOT_DEMONSTRATED while any material universe coverage remains blocked.
