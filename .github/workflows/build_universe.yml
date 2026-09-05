@@ -8,6 +8,7 @@ on:
       - "src/universe/**"
       - "src/orchestration/build_universe.py"
       - "config/symbol_aliases.yml"
+      - "config/mandate_exclusions.yml"
       - "tests/test_universe.py"
       - "pytest.ini"
       - ".github/workflows/build_universe.yml"
@@ -43,6 +44,7 @@ jobs:
           python -m src.orchestration.build_universe \
             --input data/input/CEDEAR_Universe_Master_v2.json \
             --aliases config/symbol_aliases.yml \
+            --exclusions config/mandate_exclusions.yml \
             --output-dir data/canonical
 
       - name: Upload universe artifacts
@@ -52,6 +54,7 @@ jobs:
           path: |
             data/canonical/cedear_universe_master.json
             data/canonical/cedear_universe_master.parquet
+            data/canonical/cedear_mandate_exclusions.json
             data/canonical/security_symbol_map.json
             data/canonical/security_symbol_map.parquet
             data/canonical/universe_manifest.json
