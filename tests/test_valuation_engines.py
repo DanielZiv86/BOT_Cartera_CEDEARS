@@ -69,12 +69,19 @@ TRACKER_POLICY = {
 
 
 class EquityConnector:
+    def __init__(self):
+        self.price_target_calls = []
+        self.recommendation_calls = []
+        self.financial_calls = []
     def price_target(self, symbol):
+        self.price_target_calls.append(symbol)
         return {"targetHigh": 150, "targetMean": 125, "targetMedian": 123, "targetLow": 90, "numberAnalysts": 20, "lastUpdated": "2026-09-01"}
     def recommendation_trends(self, symbol):
-        return [{"period": "2026-09-01", "strongBuy": 8, "buy": 6, "hold": 5, "sell": 1, "strongSell": 0}]
+        self.recommendation_calls.append(symbol)
+        raise AssertionError("recommendation enrichment must be deferred in universe mode")
     def basic_financials(self, symbol):
-        return {"metric": {"peTTM": 22}, "series": {"annual": {"netMargin": [{"period": "2025-12-31", "v": 0.2}]}}}
+        self.financial_calls.append(symbol)
+        raise AssertionError("fundamental enrichment must be deferred in universe mode")
     def retrieved_at(self):
         return "2026-09-05T00:00:00+00:00"
 
@@ -136,11 +143,18 @@ class TrackerConnector:
 
 
 def test_equity_ready_when_consensus_is_fresh():
-    row = build_equity_scenario("AAA", 100.0, EquityConnector(), POLICY, as_of=date(2026, 9, 5))
+    connector = EquityConnector()
+    row = build_equity_scenario("AAA", 100.0, connector, POLICY, as_of=date(2026, 9, 5))
     assert row["valuation_status"] == "VALUATION_READY"
     assert row["bull_target_price"] == 150
     assert row["bear_target_price"] == 90
-    assert abs(row["bull_probability"] + row["base_probability"] + row["bear_probability"] - 1.0) < 1e-9
+    assert row["bull_probability"] == 0.25
+    assert row["base_probability"] == 0.50
+    assert row["bear_probability"] == 0.25
+    assert row["enrichment_status"] == "DEFERRED_TO_DEEP_RESEARCH"
+    assert connector.price_target_calls == ["AAA"]
+    assert connector.recommendation_calls == []
+    assert connector.financial_calls == []
 
 
 def test_equity_stale_target_blocks():
