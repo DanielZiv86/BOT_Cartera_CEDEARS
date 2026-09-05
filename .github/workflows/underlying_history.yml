@@ -1,0 +1,80 @@
+name: Build Underlying Historical Price Layer
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Underlying Price Layer"]
+    types: [completed]
+  schedule:
+    - cron: "0 23 * * 1-5"
+  push:
+    paths:
+      - "src/market_data/history_layer.py"
+      - "src/orchestration/build_underlying_history.py"
+      - "tests/test_underlying_history.py"
+      - ".github/workflows/underlying_history.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-underlying-history:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest -q tests/test_underlying_history.py tests/test_underlying_prices.py tests/test_universe.py
+
+      - name: Download latest canonical security symbol map
+        run: |
+          RUN_ID=$(gh run list \
+            --workflow build_universe.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful Build Universe workflow run found"
+            exit 2
+          fi
+          echo "Using canonical universe workflow run: $RUN_ID"
+          mkdir -p data/upstream_universe
+          gh run download "$RUN_ID" \
+            --name canonical-universe \
+            --dir data/upstream_universe
+          test -f data/upstream_universe/security_symbol_map.json
+
+      - name: Build Underlying Historical Price Layer
+        run: |
+          python -m src.orchestration.build_underlying_history \
+            --symbol-map data/upstream_universe/security_symbol_map.json \
+            --output-dir data/canonical/market_data \
+            --max-workers 12
+
+      - name: Upload underlying history artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: underlying-history-layer
+          path: |
+            data/canonical/market_data/underlying_history.parquet
+            data/canonical/market_data/underlying_history_status.json
+            data/canonical/market_data/underlying_history_status.parquet
+            data/canonical/market_data/underlying_history_metrics.json
+          if-no-files-found: error
+          retention-days: 90
