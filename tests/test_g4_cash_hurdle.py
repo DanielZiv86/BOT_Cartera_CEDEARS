@@ -4,6 +4,7 @@ import pandas as pd
 
 from src.orchestration.build_g4_cash_hurdle import _apply_global_governance
 from src.valuation.g4 import G4Policy, calculate_g4_cash_hurdle
+from src.valuation.g4_review import apply_extreme_target_review
 
 
 def _base_local():
@@ -37,6 +38,7 @@ def test_g4_pass_when_margin_and_downside_are_sufficient():
         "valuation_method": "TEST_MODEL",
         "valuation_status": "VALUATION_READY",
         "valuation_confidence": 0.90,
+        "current_price": 100.0,
         "bull_target_price": 140.0,
         "base_target_price": 125.0,
         "bear_target_price": 90.0,
@@ -104,7 +106,38 @@ def test_incomplete_universe_blocks_global_deployment_even_with_passes():
         "ticker_count": 305,
         "blocked_count": 80,
         "pass_count": 90,
+        "clean_g4_pass_count": 60,
+        "extreme_target_review_required_count": 30,
         "deployment_decision": "ALLOW_NEW_DEPLOYMENT",
     })
     assert governed["deployment_decision"] == "RESEARCH_BLOCKED"
     assert governed["ranking_status"] == "PARTIAL_NOT_ACTIONABLE"
+
+
+def test_extreme_target_pass_is_flagged_and_not_clean_actionable():
+    valuation = pd.DataFrame([{
+        "cedear_ticker": "TEST",
+        "current_price": 100.0,
+        "bull_target_price": 240.0,
+        "base_target_price": 180.0,
+        "bear_target_price": 80.0,
+    }])
+    economic = pd.DataFrame([{
+        "cedear_ticker": "TEST",
+        "g4_status": "G4_PASS",
+        "net_benefit_vs_cash": 0.25,
+    }])
+    reviewed, metrics = apply_extreme_target_review(economic, valuation, {
+        "target_review": {
+            "base_upside_review_threshold": 0.75,
+            "bull_upside_review_threshold": 1.25,
+            "high_low_dispersion_review_threshold": 1.00,
+        }
+    })
+    row = reviewed.iloc[0]
+    assert row["target_review_status"] == "EXTREME_TARGET_REQUIRES_REVIEW"
+    assert "EXTREME_BASE_TARGET_UPSIDE" in row["target_review_flags"]
+    assert "EXTREME_BULL_TARGET_UPSIDE" in row["target_review_flags"]
+    assert "EXTREME_HIGH_LOW_TARGET_DISPERSION" in row["target_review_flags"]
+    assert metrics["extreme_target_review_required_count"] == 1
+    assert metrics["clean_g4_pass_count"] == 0
