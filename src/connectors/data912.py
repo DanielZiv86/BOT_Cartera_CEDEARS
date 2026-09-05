@@ -42,10 +42,10 @@ class Data912CedearConnector:
             if not symbol:
                 continue
             ticker = str(symbol).strip().upper()
-            last = self._first(raw, "last", "price", "close", "ultimo", "Último", "ultimoPrecio")
-            bid = self._first(raw, "bid", "bidPrice", "compra", "precioCompra")
-            ask = self._first(raw, "ask", "askPrice", "venta", "precioVenta")
-            volume = self._first(raw, "volume", "nominalVolume", "volumenNominal", "volumen")
+            last = self._first(raw, "c", "last", "price", "close", "ultimo", "Último", "ultimoPrecio")
+            bid = self._first(raw, "px_bid", "bid", "bidPrice", "compra", "precioCompra")
+            ask = self._first(raw, "px_ask", "ask", "askPrice", "venta", "precioVenta")
+            volume = self._first(raw, "v", "volume", "nominalVolume", "volumenNominal", "volumen")
             cash_volume = self._first(raw, "cashVolume", "amountVolume", "volumenMonto", "monto")
             timestamp = self._first(raw, "timestamp", "date", "datetime", "fecha")
             panel[ticker] = {
@@ -73,7 +73,6 @@ def _to_float(value: Any) -> float | None:
     text = str(value).strip().replace("%", "")
     if not text:
         return None
-    # API JSON should normally use dot decimals; tolerate formatted values.
     if "," in text and "." in text:
         text = text.replace(",", "")
     elif "," in text:
