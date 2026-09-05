@@ -37,10 +37,15 @@ def build_equity_scenario(
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
+    freshness = policy.get("freshness", {})
+    quality = policy.get("quality", {})
+    confidence_policy = policy.get("confidence", {})
+    probability_policy = policy.get("probabilities", {})
+    max_pt_age = int(freshness.get("price_target_max_age_days", 45))
+    min_analysts = int(quality.get("minimum_equity_analyst_count", 3))
+
     try:
         price_target = connector.price_target(ticker)
-        recommendations = connector.recommendation_trends(ticker)
-        financials = connector.basic_financials(ticker)
     except FinnhubAccessDenied as exc:
         return {
             "underlying_ticker": ticker,
@@ -70,14 +75,6 @@ def build_equity_scenario(
     last_updated = price_target.get("lastUpdated")
     pt_age = age_days(last_updated, as_of=as_of)
 
-    freshness = policy.get("freshness", {})
-    quality = policy.get("quality", {})
-    confidence_policy = policy.get("confidence", {})
-    probability_policy = policy.get("probabilities", {})
-
-    max_pt_age = int(freshness.get("price_target_max_age_days", 45))
-    min_analysts = int(quality.get("minimum_equity_analyst_count", 3))
-
     if any(v is None or v <= 0 for v in (high, mean, low)):
         blockers.append("PRICE_TARGET_FIELDS_MISSING")
     if not blockers and not (low <= mean <= high):
@@ -90,6 +87,59 @@ def build_equity_scenario(
         blockers.append("INSUFFICIENT_ANALYST_COVERAGE")
     if current_price is None or current_price <= 0:
         blockers.append("CURRENT_PRICE_MISSING")
+
+    # Price target is the material input for this methodology. If it already
+    # fails, skip optional recommendation/fundamental calls to reduce API load
+    # and avoid artificial Finnhub rate-limit blockers.
+    if blockers:
+        return {
+            "underlying_ticker": ticker,
+            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            "valuation_status": "BLOCKED_BY_DATA",
+            "valuation_confidence": None,
+            "bull_target_price": None,
+            "base_target_price": None,
+            "bear_target_price": None,
+            "bull_probability": None,
+            "base_probability": None,
+            "bear_probability": None,
+            "current_price": current_price,
+            "analyst_count": analyst_count,
+            "price_target_last_updated": last_updated,
+            "price_target_age_days": pt_age,
+            "recommendation_period": None,
+            "recommendation_age_days": None,
+            "latest_fundamental_period": None,
+            "fundamentals_age_days": None,
+            "blockers": blockers,
+            "source_date": last_updated,
+            "source_ref": "Finnhub /stock/price-target",
+            "retrieved_at": connector.retrieved_at(),
+        }
+
+    try:
+        recommendations = connector.recommendation_trends(ticker)
+        financials = connector.basic_financials(ticker)
+    except FinnhubAccessDenied as exc:
+        return {
+            "underlying_ticker": ticker,
+            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            "valuation_status": "BLOCKED_BY_DATA",
+            "valuation_confidence": None,
+            "blockers": [str(exc)],
+            "source_ref": "Finnhub API",
+            "retrieved_at": connector.retrieved_at(),
+        }
+    except FinnhubError as exc:
+        return {
+            "underlying_ticker": ticker,
+            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            "valuation_status": "BLOCKED_BY_DATA",
+            "valuation_confidence": None,
+            "blockers": ["FINNHUB_REQUEST_FAILED", str(exc)],
+            "source_ref": "Finnhub API",
+            "retrieved_at": connector.retrieved_at(),
+        }
 
     latest_rec = recommendations[0] if recommendations else None
     rec_age = age_days((latest_rec or {}).get("period"), as_of=as_of)
@@ -128,21 +178,19 @@ def build_equity_scenario(
 
     base_target = median if median is not None and median > 0 else mean
     if base_target is not None and mean is not None:
-        # Keep the base scenario anchored to mean consensus while allowing median as a robustness check.
         base_target = 0.70 * mean + 0.30 * base_target
 
-    valuation_status = "VALUATION_READY" if not blockers else "BLOCKED_BY_DATA"
     return {
         "underlying_ticker": ticker,
         "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
-        "valuation_status": valuation_status,
-        "valuation_confidence": round(confidence, 4) if not blockers else None,
-        "bull_target_price": high if not blockers else None,
-        "base_target_price": base_target if not blockers else None,
-        "bear_target_price": low if not blockers else None,
-        "bull_probability": probs[0] if not blockers else None,
-        "base_probability": probs[1] if not blockers else None,
-        "bear_probability": probs[2] if not blockers else None,
+        "valuation_status": "VALUATION_READY",
+        "valuation_confidence": round(confidence, 4),
+        "bull_target_price": high,
+        "base_target_price": base_target,
+        "bear_target_price": low,
+        "bull_probability": probs[0],
+        "base_probability": probs[1],
+        "bear_probability": probs[2],
         "current_price": current_price,
         "analyst_count": analyst_count,
         "price_target_last_updated": last_updated,
@@ -151,7 +199,7 @@ def build_equity_scenario(
         "recommendation_age_days": rec_age,
         "latest_fundamental_period": latest_financial_period.isoformat() if latest_financial_period else None,
         "fundamentals_age_days": fundamentals_age,
-        "blockers": blockers,
+        "blockers": [],
         "source_date": last_updated,
         "source_ref": "Finnhub /stock/price-target + /stock/recommendation + /stock/metric",
         "retrieved_at": connector.retrieved_at(),
