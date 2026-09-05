@@ -9,6 +9,29 @@ from src.valuation.common import age_days, normalized_probabilities
 from src.valuation.etf_engine import _holding_scenario_return
 
 
+def _cached_equity_return(row: dict[str, Any] | None) -> dict[str, float] | None:
+    if not row or row.get("valuation_status") != "VALUATION_READY":
+        return None
+    current = row.get("current_price")
+    bull = row.get("bull_target_price")
+    base = row.get("base_target_price")
+    bear = row.get("bear_target_price")
+    try:
+        current = float(current)
+        bull = float(bull)
+        base = float(base)
+        bear = float(bear)
+    except (TypeError, ValueError):
+        return None
+    if current <= 0 or min(bull, base, bear) <= 0:
+        return None
+    return {
+        "bull": bull / current - 1.0,
+        "base": base / current - 1.0,
+        "bear": bear / current - 1.0,
+    }
+
+
 def build_issuer_etf_scenario(
     symbol: str,
     current_price: float | None,
@@ -16,12 +39,14 @@ def build_issuer_etf_scenario(
     issuer_holdings: IssuerHoldingsConnector,
     policy: dict[str, Any],
     as_of: date | None = None,
+    equity_scenarios: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
     freshness = policy.get("freshness", {})
     quality = policy.get("quality", {})
     confidence_policy = policy.get("confidence", {})
+    equity_scenarios = equity_scenarios or {}
 
     special = {str(t).upper() for t in policy.get("instrument_overrides", {}).get("non_equity_trackers", [])}
     if ticker in special:
@@ -59,6 +84,8 @@ def build_issuer_etf_scenario(
 
     max_holdings = int(quality.get("maximum_etf_holdings_to_analyze", 50))
     sorted_holdings = sorted(snapshot.holdings, key=lambda x: float(x.get("percent") or 0), reverse=True)[:max_holdings]
+    min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
+    min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
 
     covered_weight = 0.0
     valid_count = 0
@@ -67,8 +94,9 @@ def build_issuer_etf_scenario(
     weighted_bear = 0.0
     holding_errors: dict[str, int] = {}
     max_pt_age = int(freshness.get("price_target_max_age_days", 45))
+    cached_count = 0
+    direct_finnhub_count = 0
 
-    # Normalize percentage-point versus fractional weights defensively.
     total_raw = sum(float(h.get("percent") or 0) for h in sorted_holdings)
     scale = 1.0 if total_raw <= 1.5 else 100.0
 
@@ -81,9 +109,18 @@ def build_issuer_etf_scenario(
         if not h_symbol or raw_weight <= 0:
             continue
         weight = raw_weight / scale
-        scenario, error = _holding_scenario_return(h_symbol, finnhub, max_pt_age, as_of)
+
+        scenario = _cached_equity_return(equity_scenarios.get(h_symbol))
+        error = None
+        if scenario is not None:
+            cached_count += 1
+        else:
+            scenario, error = _holding_scenario_return(h_symbol, finnhub, max_pt_age, as_of)
+            if scenario is not None:
+                direct_finnhub_count += 1
+
         if scenario is None:
-            holding_errors[error or "UNKNOWN"] = holding_errors.get(error or "UNKNOWN", 0) + 1
+            holding_errors[error or "NO_READY_EQUITY_VALUATION"] = holding_errors.get(error or "NO_READY_EQUITY_VALUATION", 0) + 1
             continue
         covered_weight += weight
         valid_count += 1
@@ -91,14 +128,14 @@ def build_issuer_etf_scenario(
         weighted_base += weight * scenario["base"]
         weighted_bear += weight * scenario["bear"]
 
-    min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
-    min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
+        if covered_weight >= min_covered and valid_count >= min_valid:
+            break
+
     if covered_weight < min_covered:
         blockers.append("ETF_LOOKTHROUGH_COVERAGE_INSUFFICIENT")
     if valid_count < min_valid:
         blockers.append("ETF_VALID_HOLDINGS_INSUFFICIENT")
 
-    # Uncovered weight receives 0% price return. This is intentionally conservative.
     bull_return = weighted_bull
     base_return = weighted_base
     bear_return = weighted_bear
@@ -137,7 +174,9 @@ def build_issuer_etf_scenario(
         "etf_holdings_age_days": holdings_age,
         "etf_lookthrough_covered_weight": covered_weight,
         "etf_valid_holding_count": valid_count,
-        "etf_analyzed_holding_count": len(sorted_holdings),
+        "etf_analyzed_holding_count": valid_count + sum(holding_errors.values()),
+        "etf_cached_equity_count": cached_count,
+        "etf_direct_finnhub_count": direct_finnhub_count,
         "holding_error_counts": holding_errors,
         "holdings_source_tier": snapshot.source_tier,
         "holdings_provider": snapshot.provider,
