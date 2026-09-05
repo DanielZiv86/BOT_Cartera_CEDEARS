@@ -1,0 +1,25 @@
+name: Bootstrap Environment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run smoke tests
+        run: pytest -q
+
+      - name: Placeholder summary
+        run: echo "Bootstrap scaffold validated. Heavy data logic is not enabled yet."
