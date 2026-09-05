@@ -1,0 +1,83 @@
+name: Build CEDEAR Local Market Layer
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Underlying Price Layer"]
+    types: [completed]
+  schedule:
+    - cron: "15 20 * * 1-5"
+  push:
+    paths:
+      - "src/connectors/iol.py"
+      - "src/connectors/data912.py"
+      - "src/market_data/cedear_local.py"
+      - "src/orchestration/build_cedear_local_market.py"
+      - "tests/test_cedear_local_market.py"
+      - ".github/workflows/cedear_local_market.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-cedear-local-market:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      IOL_USERNAME: ${{ secrets.IOL_USERNAME }}
+      IOL_PASSWORD: ${{ secrets.IOL_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest -q tests/test_cedear_local_market.py
+
+      - name: Download latest canonical universe
+        run: |
+          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_universe
+          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
+          test -f data/upstream_universe/cedear_universe_master.parquet
+
+      - name: Download latest underlying prices
+        run: |
+          RUN_ID=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_prices
+          gh run download "$RUN_ID" --name underlying-price-layer --dir data/upstream_prices
+          test -f data/upstream_prices/underlying_prices.parquet
+
+      - name: Build local CEDEAR market and implied CCL
+        run: |
+          python -m src.orchestration.build_cedear_local_market \
+            --universe data/upstream_universe/cedear_universe_master.parquet \
+            --underlying-prices data/upstream_prices/underlying_prices.parquet \
+            --output-dir data/canonical/local_market \
+            --brokerage-rate 0.006
+
+      - name: Upload local market artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cedear-local-market-layer
+          path: |
+            data/canonical/local_market/cedear_local_market.json
+            data/canonical/local_market/cedear_local_market.parquet
+            data/canonical/local_market/cedear_implied_ccl.json
+            data/canonical/local_market/cedear_implied_ccl.parquet
+            data/canonical/local_market/cedear_local_market_metrics.json
+          if-no-files-found: error
+          retention-days: 90
