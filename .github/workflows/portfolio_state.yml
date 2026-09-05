@@ -1,0 +1,82 @@
+name: Build Portfolio State Engine
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "data/input/portfolio_state_*.json"
+      - "config/portfolio_classification.yml"
+      - "src/portfolio/**"
+      - "src/risk/portfolio_risk.py"
+      - "src/risk/portfolio_fit.py"
+      - "src/orchestration/build_portfolio_state.py"
+      - "tests/test_portfolio_state.py"
+      - ".github/workflows/portfolio_state.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-portfolio-state:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest -q tests/test_portfolio_state.py tests/test_risk_engine.py
+
+      - name: Download latest underlying history artifact
+        run: |
+          RUN_ID=$(gh run list --workflow underlying_history.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_history
+          gh run download "$RUN_ID" --name underlying-history-layer --dir data/upstream_history
+          test -f data/upstream_history/underlying_history.parquet
+
+      - name: Download latest risk correlation artifact
+        run: |
+          RUN_ID=$(gh run list --workflow risk_correlations.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_risk
+          gh run download "$RUN_ID" --name risk-correlation-engine --dir data/upstream_risk
+          test -f data/upstream_risk/correlation_matrix_long.parquet
+
+      - name: Build Portfolio State Engine
+        run: |
+          python -m src.orchestration.build_portfolio_state \
+            --portfolio-state data/input/portfolio_state_baseline_20260904.json \
+            --history data/upstream_history/underlying_history.parquet \
+            --correlations data/upstream_risk/correlation_matrix_long.parquet \
+            --classification config/portfolio_classification.yml \
+            --output-dir data/canonical/portfolio
+
+      - name: Upload portfolio state artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-state-engine
+          path: |
+            data/canonical/portfolio/portfolio_positions.json
+            data/canonical/portfolio/portfolio_positions.parquet
+            data/canonical/portfolio/portfolio_risk_contribution.json
+            data/canonical/portfolio/portfolio_risk_contribution.parquet
+            data/canonical/portfolio/portfolio_sector_exposure.json
+            data/canonical/portfolio/portfolio_factor_exposure.json
+            data/canonical/portfolio/portfolio_fit_quantitative.json
+            data/canonical/portfolio/portfolio_fit_quantitative.parquet
+            data/canonical/portfolio/portfolio_state_manifest.json
+          if-no-files-found: error
+          retention-days: 90
