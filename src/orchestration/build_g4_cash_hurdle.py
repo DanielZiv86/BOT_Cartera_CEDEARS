@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 
 from src.valuation.g4 import G4Policy, calculate_g4_cash_hurdle
+from src.valuation.g4_review import apply_extreme_target_review
 
 
 def _load_policy(path: str) -> tuple[G4Policy, dict]:
@@ -49,14 +50,19 @@ def _apply_global_governance(metrics: dict) -> dict:
     governed = dict(metrics)
     blocked = int(governed.get("blocked_count", 0) or 0)
     passes = int(governed.get("pass_count", 0) or 0)
+    clean_passes = int(governed.get("clean_g4_pass_count", passes) or 0)
+    review_required = int(governed.get("extreme_target_review_required_count", 0) or 0)
     total = int(governed.get("ticker_count", 0) or 0)
 
     if total == 0 or blocked > 0:
         governed["deployment_decision"] = "RESEARCH_BLOCKED"
         governed["ranking_status"] = "PARTIAL_NOT_ACTIONABLE"
-    elif passes > 0:
+    elif clean_passes > 0:
         governed["deployment_decision"] = "ALLOW_NEW_DEPLOYMENT"
-        governed["ranking_status"] = "COMPLETE_ACTIONABLE"
+        governed["ranking_status"] = "COMPLETE_WITH_REVIEW_FLAGS" if review_required > 0 else "COMPLETE_ACTIONABLE"
+    elif passes > 0 and review_required > 0:
+        governed["deployment_decision"] = "NO_NEW_DEPLOYMENT_PENDING_TARGET_REVIEW"
+        governed["ranking_status"] = "COMPLETE_REVIEW_REQUIRED"
     else:
         governed["deployment_decision"] = "NO_NEW_DEPLOYMENT"
         governed["ranking_status"] = "COMPLETE_ACTIONABLE"
@@ -88,6 +94,8 @@ def main() -> int:
         policy=policy,
         brokerage_rate=args.brokerage_rate,
     )
+    result, review_metrics = apply_extreme_target_review(result, valuation_inputs, raw_policy)
+    metrics = {**metrics, **review_metrics}
     metrics = _apply_global_governance(metrics)
 
     if not result.empty and "g4_rank" in result.columns:
@@ -99,17 +107,28 @@ def main() -> int:
     json_df = result.copy()
     if "blockers" in json_df.columns:
         json_df["blockers"] = json_df["blockers"].map(lambda x: x if isinstance(x, list) else [])
+    if "target_review_flags" in json_df.columns:
+        json_df["target_review_flags"] = json_df["target_review_flags"].map(lambda x: x if isinstance(x, list) else [])
     json_df.to_json(out / "g4_cash_hurdle.json", orient="records", indent=2, force_ascii=False)
 
     parquet = result.copy()
-    if "blockers" in parquet.columns:
-        parquet["blockers"] = parquet["blockers"].map(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, list) else x)
+    for col in ("blockers", "target_review_flags"):
+        if col in parquet.columns:
+            parquet[col] = parquet[col].map(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, list) else x)
     parquet.to_parquet(out / "g4_cash_hurdle.parquet", index=False)
 
     ranked = result[result["g4_status"] != "BLOCKED_BY_DATA"].copy() if not result.empty else result.copy()
     if not ranked.empty:
         ranked = ranked.sort_values("net_benefit_vs_cash", ascending=False)
     ranked.to_json(out / "g4_ranked_evaluated.json", orient="records", indent=2, force_ascii=False)
+
+    actionable = result[
+        (result["g4_status"] == "G4_PASS")
+        & (result["target_review_status"] == "ACTIONABLE_IF_GLOBAL_GOVERNANCE_ALLOWS")
+    ].copy() if not result.empty else result.copy()
+    if not actionable.empty:
+        actionable = actionable.sort_values("net_benefit_vs_cash", ascending=False)
+    actionable.to_json(out / "g4_ranked_actionable.json", orient="records", indent=2, force_ascii=False)
 
     manifest = {
         "layer": "Valuation Engine + G4 Cash Hurdle",
