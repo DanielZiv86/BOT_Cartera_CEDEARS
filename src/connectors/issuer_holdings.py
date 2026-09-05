@@ -26,21 +26,13 @@ class HoldingsSnapshot:
 
 
 class IssuerHoldingsConnector:
-    """Fetch and normalize ETF holdings from issuer pages or configured fallbacks.
-
-    Sources are configured per ticker. Supported modes:
-      - html_table: parse a holdings table from an HTML page.
-      - ishares_csv: use the official iShares holdings CSV endpoint derived from a product page URL.
-
-    A secondary HTML source can be configured, but its tier is always preserved as
-    SECONDARY_HOLDINGS_FALLBACK so downstream confidence can be reduced.
-    """
+    """Fetch and normalize ETF holdings from issuer pages or configured fallbacks."""
 
     def __init__(self, sources: dict[str, Any], timeout: int = 30):
         self.sources = {str(k).upper(): v for k, v in (sources or {}).items()}
         self.timeout = timeout
         self.headers = {
-            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.0",
+            "User-Agent": "Mozilla/5.0 CEDEAR-ETF-Valuation/1.1",
             "Accept-Language": "en-US,en;q=0.9",
         }
 
@@ -55,7 +47,7 @@ class IssuerHoldingsConnector:
         if isinstance(primary, dict):
             try:
                 return self._fetch_source(symbol, primary, "ISSUER_OFFICIAL")
-            except Exception as exc:  # noqa: BLE001 - preserve provider fallback semantics
+            except Exception as exc:  # noqa: BLE001
                 attempts.append(f"PRIMARY:{type(exc).__name__}:{exc}")
 
         secondary = cfg.get("secondary")
@@ -151,31 +143,40 @@ class IssuerHoldingsConnector:
                 continue
             if weight <= 0:
                 continue
-            if weight <= 1.0 and "%" not in str(row.get(weight_col)):
-                # Most issuer tables publish percentage points; preserve fractional
-                # values only when they clearly sum like decimals downstream.
-                pass
             rows.append({"symbol": symbol, "percent": weight})
         return rows
 
     @staticmethod
     def _extract_date(text: str) -> str | None:
+        """Return the freshest explicit 'as of' date found in an issuer payload.
+
+        Issuer pages often contain several historical dates (yield, distributions,
+        NAV, characteristics). Returning the first regex match can incorrectly mark
+        current holdings as stale. We collect every parseable candidate and choose
+        the latest non-future date, with a one-day tolerance for timezone effects.
+        """
         patterns = [
             r"(?:as of|holdings as of|daily holdings .*? as of)\s*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
             r"(?:as of|holdings as of)\s*(\d{1,2}/\d{1,2}/\d{4})",
             r"(?:as of|holdings as of)\s*(\d{4}-\d{2}-\d{2})",
         ]
+        parsed = []
         for pattern in patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            value = match.group(1)
-            for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
-                try:
-                    return datetime.strptime(value, fmt).date().isoformat()
-                except ValueError:
-                    pass
-        return None
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                value = match.group(1)
+                for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
+                    try:
+                        parsed.append(datetime.strptime(value, fmt).date())
+                        break
+                    except ValueError:
+                        pass
+        if not parsed:
+            return None
+        today = datetime.now(timezone.utc).date()
+        usable = [d for d in parsed if (d - today).days <= 1]
+        if not usable:
+            return None
+        return max(usable).isoformat()
 
     @staticmethod
     def retrieved_at() -> str:
