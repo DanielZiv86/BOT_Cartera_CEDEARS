@@ -23,6 +23,10 @@ on:
       - "tests/test_valuation_engines.py"
       - ".github/workflows/valuation_scenarios.yml"
 
+concurrency:
+  group: valuation-scenarios-main
+  cancel-in-progress: true
+
 permissions:
   contents: read
   actions: read
