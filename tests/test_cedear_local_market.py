@@ -24,7 +24,7 @@ def test_implied_ccl_uses_comafi_ratio_and_valid_book():
     assert abs(row["effective_executable_buy_ars"] - 25250.6) < 1e-9
     assert row["ratio_status"] == "RATIO_VALIDATED_COMAFI"
     assert row["ccl_status"] == "CCL_READY_VALIDATED"
-    assert row["valuation_g4_local_gate"] == "PASS_WITH_VALIDATED_LOCAL_DATA"
+    assert row["valuation_g4_local_gate"] == "PASS"
 
 
 def test_absurd_book_is_excluded_from_mid_and_execution():
