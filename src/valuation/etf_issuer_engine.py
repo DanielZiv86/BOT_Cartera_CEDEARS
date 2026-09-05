@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any
 
 from src.connectors.finnhub import FinnhubConnector
-from src.connectors.issuer_holdings import IssuerHoldingsConnector, IssuerHoldingsError
+from src.connectors.issuer_holdings import HoldingsSnapshot, IssuerHoldingsConnector, IssuerHoldingsError
 from src.valuation.common import age_days, normalized_probabilities
 from src.valuation.etf_engine import ConstituentScenario, _cached_holding_scenario_return
 
@@ -42,6 +42,7 @@ def build_issuer_etf_scenario(
     equity_scenarios: dict[str, dict[str, Any]] | None = None,
     constituent_cache: dict[str, ConstituentScenario] | None = None,
     direct_lookup_budget: dict[str, int] | None = None,
+    holdings_snapshot: HoldingsSnapshot | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
@@ -63,7 +64,7 @@ def build_issuer_etf_scenario(
         }
 
     try:
-        snapshot = issuer_holdings.fetch(ticker)
+        snapshot = holdings_snapshot or issuer_holdings.fetch(ticker)
     except IssuerHoldingsError as exc:
         return {
             "underlying_ticker": ticker,
