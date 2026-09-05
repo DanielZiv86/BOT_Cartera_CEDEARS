@@ -67,6 +67,8 @@ class IssuerHoldingsConnector:
 
         if mode == "ishares_csv":
             holdings, as_of = self._fetch_ishares_csv(url, ticker)
+        elif mode == "ishares_ucits_html":
+            holdings, as_of = self._fetch_ishares_ucits_html(url)
         elif mode == "html_table":
             holdings, as_of = self._fetch_html_table(url)
         else:
@@ -107,6 +109,28 @@ class IssuerHoldingsConnector:
         as_of = self._extract_date(text)
         return holdings, as_of
 
+    def _fetch_ishares_ucits_html(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
+        """Explicit adapter for iShares UCITS pages such as IWDA/SWDA.
+
+        UCITS pages expose a holdings table headed by Issuer Ticker and Weight (%),
+        rather than relying on the US .ajax CSV convention. We prefer the largest
+        normalized holdings table and use the freshest visible 'as of' date.
+        """
+        response = self._get(url)
+        text = response.text
+        tables = pd.read_html(io.StringIO(text))
+        candidates: list[tuple[int, list[dict[str, Any]]]] = []
+        for table in tables:
+            normalized = self._normalize_table(table)
+            if normalized:
+                cols = " ".join(str(c).lower() for c in table.columns)
+                score = len(normalized) + (10000 if "issuer ticker" in cols and "weight" in cols else 0)
+                candidates.append((score, normalized))
+        if not candidates:
+            raise IssuerHoldingsError("ISHARES_UCITS_HOLDINGS_TABLE_NOT_FOUND")
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1], self._extract_date(text)
+
     def _fetch_html_table(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
         response = self._get(url)
         text = response.text
@@ -126,7 +150,7 @@ class IssuerHoldingsConnector:
         df.columns = [str(c).strip() for c in df.columns]
         lower = {str(c).strip().lower(): c for c in df.columns}
 
-        ticker_col = next((orig for key, orig in lower.items() if key in {"ticker", "symbol"} or "ticker" in key), None)
+        ticker_col = next((orig for key, orig in lower.items() if key in {"ticker", "symbol", "issuer ticker"} or "ticker" in key), None)
         weight_col = next((orig for key, orig in lower.items() if "weight" in key or "% of fund" in key or "% of net assets" in key or "holding percent" in key), None)
         if ticker_col is None or weight_col is None:
             return []
@@ -148,35 +172,23 @@ class IssuerHoldingsConnector:
 
     @staticmethod
     def _extract_date(text: str) -> str | None:
-        """Return the freshest explicit 'as of' date found in an issuer payload.
-
-        Issuer pages often contain several historical dates (yield, distributions,
-        NAV, characteristics). Returning the first regex match can incorrectly mark
-        current holdings as stale. We collect every parseable candidate and choose
-        the latest non-future date, with a one-day tolerance for timezone effects.
-        """
         patterns = [
             r"(?:as of|holdings as of|daily holdings .*? as of)\s*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
             r"(?:as of|holdings as of)\s*(\d{1,2}/\d{1,2}/\d{4})",
             r"(?:as of|holdings as of)\s*(\d{4}-\d{2}-\d{2})",
+            r"(?:as of|holdings as of)\s*(\d{1,2}/[A-Za-z]{3,9}/\d{4})",
         ]
-        parsed = []
+        dates: list[datetime] = []
         for pattern in patterns:
             for match in re.finditer(pattern, text, flags=re.IGNORECASE):
                 value = match.group(1)
-                for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"):
+                for fmt in ("%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%Y-%m-%d", "%d/%b/%Y", "%d/%B/%Y"):
                     try:
-                        parsed.append(datetime.strptime(value, fmt).date())
+                        dates.append(datetime.strptime(value, fmt))
                         break
                     except ValueError:
                         pass
-        if not parsed:
-            return None
-        today = datetime.now(timezone.utc).date()
-        usable = [d for d in parsed if (d - today).days <= 1]
-        if not usable:
-            return None
-        return max(usable).isoformat()
+        return max(dates).date().isoformat() if dates else None
 
     @staticmethod
     def retrieved_at() -> str:
