@@ -13,9 +13,13 @@ from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import build_etf_scenario
 
 
-def _is_etf(instrument_type: object, issuer_name: object) -> bool:
+def _is_etf(cedear_ticker: str, instrument_type: object, issuer_name: object, policy: dict) -> bool:
     text = f"{instrument_type or ''} {issuer_name or ''}".upper()
-    return any(token in text for token in ("ETF", "ETP", "EXCHANGE TRADED FUND"))
+    if any(token in text for token in ("ETF", "ETP", "EXCHANGE TRADED FUND")):
+        return True
+    overrides = policy.get("instrument_overrides", {}).get("etf_like_tickers", [])
+    override_set = {str(t).strip().upper() for t in overrides if str(t).strip()}
+    return cedear_ticker.upper() in override_set
 
 
 def _price_map(prices: pd.DataFrame) -> dict[str, float]:
@@ -55,7 +59,7 @@ def main() -> int:
         cedear = str(item.get("cedear_ticker") or "").upper()
         underlying = str(item.get("underlying_ticker") or cedear).upper()
         current_price = prices_by_cedear.get(cedear)
-        is_etf = _is_etf(item.get("instrument_type"), item.get("issuer_name"))
+        is_etf = _is_etf(cedear, item.get("instrument_type"), item.get("issuer_name"), policy)
         if is_etf:
             etf_count += 1
             scenario = build_etf_scenario(underlying, current_price, connector, policy)
@@ -107,6 +111,7 @@ def main() -> int:
         "etf_ready_count": etf_ready,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "freshness_policy": policy.get("freshness", {}),
+        "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
         "note": "All 305 rows are emitted. Missing/stale material data remains BLOCKED_BY_DATA; no technical-price proxy is substituted for valuation.",
     }
