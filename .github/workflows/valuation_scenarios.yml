@@ -21,6 +21,7 @@ on:
       - "config/non_equity_tracker_policy.yml"
       - "requirements.txt"
       - "tests/test_valuation_engines.py"
+      - "tests/test_valuation_v17.py"
       - ".github/workflows/valuation_scenarios.yml"
 
 concurrency:
@@ -54,7 +55,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run valuation unit tests
-        run: pytest -q tests/test_valuation_engines.py
+        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py
 
       - name: Download latest canonical universe
         run: |
