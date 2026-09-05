@@ -1,0 +1,31 @@
+classification_version: PORTFOLIO-CLASS-V1
+classification_scope: TOP_LEVEL_INSTRUMENT_BUCKET_V1
+methodology: Manual canonical portfolio classification; ETFs are classified by mandate/style bucket, not constituent look-through.
+entries:
+  ADP:
+    sector: Industrials
+    factor: Quality
+  BRKB:
+    sector: Financials
+    factor: Quality-Value
+  GOOGL:
+    sector: Communication Services
+    factor: Growth
+  RTX:
+    sector: Industrials
+    factor: Quality-Defense
+  SPGI:
+    sector: Financials
+    factor: Quality
+  VEA:
+    sector: Multi-Sector International
+    factor: Developed ex-US
+  VIG:
+    sector: Multi-Sector US
+    factor: Dividend-Quality
+  XLV:
+    sector: Health Care
+    factor: Defensive
+  CASH:
+    sector: Cash
+    factor: Cash
