@@ -4,28 +4,7 @@ from datetime import date
 from typing import Any
 
 from src.connectors.finnhub import FinnhubAccessDenied, FinnhubConnector, FinnhubError
-from src.valuation.common import age_days, as_float, latest_series_period, normalized_probabilities
-
-
-def _recommendation_probabilities(
-    recommendation: dict[str, Any] | None,
-    prior: tuple[float, float, float],
-    max_blend_weight: float,
-) -> tuple[float, float, float]:
-    if not recommendation:
-        return prior
-    strong_buy = as_float(recommendation.get("strongBuy")) or 0.0
-    buy = as_float(recommendation.get("buy")) or 0.0
-    hold = as_float(recommendation.get("hold")) or 0.0
-    sell = as_float(recommendation.get("sell")) or 0.0
-    strong_sell = as_float(recommendation.get("strongSell")) or 0.0
-    total = strong_buy + buy + hold + sell + strong_sell
-    if total <= 0:
-        return prior
-    observed = ((strong_buy + buy) / total, hold / total, (sell + strong_sell) / total)
-    blend = min(total / 20.0, 1.0) * max_blend_weight
-    mixed = tuple((1.0 - blend) * p + blend * o for p, o in zip(prior, observed))
-    return normalized_probabilities(mixed)
+from src.valuation.common import age_days, as_float, normalized_probabilities
 
 
 def build_equity_scenario(
@@ -35,6 +14,14 @@ def build_equity_scenario(
     policy: dict[str, Any],
     as_of: date | None = None,
 ) -> dict[str, Any]:
+    """Build the broad-universe equity valuation scenario.
+
+    Universe mode intentionally uses only Finnhub /stock/price-target as the
+    material external input. Recommendation trends and fundamental metrics are
+    deferred to Deep Research for shortlisted candidates. This keeps the full
+    305-name run bounded, deterministic and auditable without weakening the
+    price-target freshness or analyst-coverage gates.
+    """
     ticker = symbol.upper()
     blockers: list[str] = []
     freshness = policy.get("freshness", {})
@@ -49,21 +36,21 @@ def build_equity_scenario(
     except FinnhubAccessDenied as exc:
         return {
             "underlying_ticker": ticker,
-            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_SCREENING_V2",
             "valuation_status": "BLOCKED_BY_DATA",
             "valuation_confidence": None,
             "blockers": [str(exc)],
-            "source_ref": "Finnhub API",
+            "source_ref": "Finnhub /stock/price-target",
             "retrieved_at": connector.retrieved_at(),
         }
     except FinnhubError as exc:
         return {
             "underlying_ticker": ticker,
-            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_SCREENING_V2",
             "valuation_status": "BLOCKED_BY_DATA",
             "valuation_confidence": None,
             "blockers": ["FINNHUB_REQUEST_FAILED", str(exc)],
-            "source_ref": "Finnhub API",
+            "source_ref": "Finnhub /stock/price-target",
             "retrieved_at": connector.retrieved_at(),
         }
 
@@ -88,13 +75,26 @@ def build_equity_scenario(
     if current_price is None or current_price <= 0:
         blockers.append("CURRENT_PRICE_MISSING")
 
-    # Price target is the material input for this methodology. If it already
-    # fails, skip optional recommendation/fundamental calls to reduce API load
-    # and avoid artificial Finnhub rate-limit blockers.
+    common = {
+        "underlying_ticker": ticker,
+        "valuation_method": "FINNHUB_ANALYST_CONSENSUS_SCREENING_V2",
+        "current_price": current_price,
+        "analyst_count": analyst_count,
+        "price_target_last_updated": last_updated,
+        "price_target_age_days": pt_age,
+        "recommendation_period": None,
+        "recommendation_age_days": None,
+        "latest_fundamental_period": None,
+        "fundamentals_age_days": None,
+        "enrichment_status": "DEFERRED_TO_DEEP_RESEARCH",
+        "source_date": last_updated,
+        "source_ref": "Finnhub /stock/price-target",
+        "retrieved_at": connector.retrieved_at(),
+    }
+
     if blockers:
         return {
-            "underlying_ticker": ticker,
-            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+            **common,
             "valuation_status": "BLOCKED_BY_DATA",
             "valuation_confidence": None,
             "bull_target_price": None,
@@ -103,77 +103,20 @@ def build_equity_scenario(
             "bull_probability": None,
             "base_probability": None,
             "bear_probability": None,
-            "current_price": current_price,
-            "analyst_count": analyst_count,
-            "price_target_last_updated": last_updated,
-            "price_target_age_days": pt_age,
-            "recommendation_period": None,
-            "recommendation_age_days": None,
-            "latest_fundamental_period": None,
-            "fundamentals_age_days": None,
             "blockers": blockers,
-            "source_date": last_updated,
-            "source_ref": "Finnhub /stock/price-target",
-            "retrieved_at": connector.retrieved_at(),
         }
 
-    try:
-        recommendations = connector.recommendation_trends(ticker)
-        financials = connector.basic_financials(ticker)
-    except FinnhubAccessDenied as exc:
-        return {
-            "underlying_ticker": ticker,
-            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
-            "valuation_status": "BLOCKED_BY_DATA",
-            "valuation_confidence": None,
-            "blockers": [str(exc)],
-            "source_ref": "Finnhub API",
-            "retrieved_at": connector.retrieved_at(),
-        }
-    except FinnhubError as exc:
-        return {
-            "underlying_ticker": ticker,
-            "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
-            "valuation_status": "BLOCKED_BY_DATA",
-            "valuation_confidence": None,
-            "blockers": ["FINNHUB_REQUEST_FAILED", str(exc)],
-            "source_ref": "Finnhub API",
-            "retrieved_at": connector.retrieved_at(),
-        }
-
-    latest_rec = recommendations[0] if recommendations else None
-    rec_age = age_days((latest_rec or {}).get("period"), as_of=as_of)
-    max_rec_age = int(freshness.get("recommendation_max_age_days", 45))
-    rec_fresh = rec_age is not None and 0 <= rec_age <= max_rec_age
-
-    prior = (
+    prior = normalized_probabilities((
         float(probability_policy.get("prior_bull", 0.25)),
         float(probability_policy.get("prior_base", 0.50)),
         float(probability_policy.get("prior_bear", 0.25)),
-    )
-    probs = _recommendation_probabilities(
-        latest_rec if rec_fresh else None,
-        prior,
-        float(probability_policy.get("max_recommendation_blend_weight", 0.50)),
-    )
-
-    latest_financial_period = latest_series_period(financials)
-    fundamentals_age = age_days(latest_financial_period, as_of=as_of) if latest_financial_period else None
-    fundamentals_fresh = (
-        fundamentals_age is not None
-        and 0 <= fundamentals_age <= int(freshness.get("fundamentals_max_period_age_days", 400))
-        and bool(financials.get("metric"))
-    )
+    ))
 
     confidence = float(confidence_policy.get("base", 0.35))
     if pt_age is not None and 0 <= pt_age <= max_pt_age:
         confidence += float(confidence_policy.get("fresh_price_target_bonus", 0.20))
     if analyst_count:
         confidence += min(analyst_count / 20.0, 1.0) * float(confidence_policy.get("analyst_count_bonus_max", 0.15))
-    if rec_fresh:
-        confidence += float(confidence_policy.get("fresh_recommendation_bonus", 0.10))
-    if fundamentals_fresh:
-        confidence += float(confidence_policy.get("fundamentals_bonus", 0.10))
     confidence = min(confidence, 1.0)
 
     base_target = median if median is not None and median > 0 else mean
@@ -181,26 +124,14 @@ def build_equity_scenario(
         base_target = 0.70 * mean + 0.30 * base_target
 
     return {
-        "underlying_ticker": ticker,
-        "valuation_method": "FINNHUB_ANALYST_CONSENSUS_V1",
+        **common,
         "valuation_status": "VALUATION_READY",
         "valuation_confidence": round(confidence, 4),
         "bull_target_price": high,
         "base_target_price": base_target,
         "bear_target_price": low,
-        "bull_probability": probs[0],
-        "base_probability": probs[1],
-        "bear_probability": probs[2],
-        "current_price": current_price,
-        "analyst_count": analyst_count,
-        "price_target_last_updated": last_updated,
-        "price_target_age_days": pt_age,
-        "recommendation_period": (latest_rec or {}).get("period"),
-        "recommendation_age_days": rec_age,
-        "latest_fundamental_period": latest_financial_period.isoformat() if latest_financial_period else None,
-        "fundamentals_age_days": fundamentals_age,
+        "bull_probability": prior[0],
+        "base_probability": prior[1],
+        "bear_probability": prior[2],
         "blockers": [],
-        "source_date": last_updated,
-        "source_ref": "Finnhub /stock/price-target + /stock/recommendation + /stock/metric",
-        "retrieved_at": connector.retrieved_at(),
     }
