@@ -101,17 +101,20 @@ def main() -> int:
     ccl_cols = [
         "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier", "ratio_used", "ratio_status",
         "last_price_ars", "bid_ars", "ask_ars", "validated_mid_ars", "analytical_local_ref_ars", "last_close", "currency",
-        "implied_ccl", "ccl_reference_mark", "ccl_deviation_vs_data912_pct", "ccl_crosscheck_status", "ccl_status",
-        "spread_pct", "execution_book_status", "effective_executable_buy_ars", "effective_executable_sell_ars",
-        "executable_roundtrip_friction_pct", "reference_buy_with_commission_ars", "valuation_g4_local_gate", "provider",
+        "implied_ccl", "market_ccl_reference", "ccl_deviation_vs_market_pct", "market_ccl_crosscheck_status", "ccl_status",
+        "ccl_reference_mark", "ccl_deviation_vs_data912_pct", "data912_ccl_diagnostic_status",
+        "spread_pct", "book_sanity_status", "market_session_status", "execution_book_status",
+        "effective_executable_buy_ars", "effective_executable_sell_ars", "executable_roundtrip_friction_pct",
+        "reference_buy_with_commission_ars", "reference_sell_after_commission_ars", "valuation_g4_local_gate", "provider",
     ]
     ccl = layer[[c for c in ccl_cols if c in layer.columns]].copy()
     ccl.to_json(out / "cedear_implied_ccl.json", orient="records", indent=2, force_ascii=False)
     ccl.to_parquet(out / "cedear_implied_ccl.parquet", index=False)
 
     ratio_audit_cols = [
-        "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier",
-        "ratio_deviation_vs_universe_pct", "ratio_status", "comafi_source_ref",
+        "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier", "ratio_used",
+        "ratio_deviation_vs_universe_pct", "ratio_status", "ratio_conflict", "comafi_program_name",
+        "comafi_underlying_ticker", "comafi_caja_code", "comafi_source_ref",
     ]
     ratio_audit = layer[[c for c in ratio_audit_cols if c in layer.columns]].copy()
     ratio_audit.to_json(out / "comafi_ratio_audit.json", orient="records", indent=2, force_ascii=False)
@@ -119,13 +122,15 @@ def main() -> int:
 
     manifest = {
         "layer": "CEDEAR Local Market + Implied CCL",
-        "version": "1.1",
+        "version": "1.2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "brokerage_rate_per_side": args.brokerage_rate,
-        "ratio_convention": "Comafi ratio CEDEARs:underlying; multiplier = numerator/denominator; implied_ccl = local_ARS * multiplier / underlying_USD",
+        "ratio_convention": "Comafi CEDEAR:underlying multiplier = numerator/denominator; implied_ccl = local_ARS * multiplier / underlying_USD",
         "provider_priority": ["IOL", "Data912"],
-        "ratio_primary_source": "Banco Comafi current CEDEAR program registry",
-        "ccl_crosscheck_source": "Data912 /live/ccl",
+        "ratio_primary_source": "Banco Comafi Programas CEDEARs current registry",
+        "ccl_primary_validation": "robust median of cross-sectional implied CCL using Comafi-validated ratios",
+        "ccl_secondary_diagnostic": "Data912 /live/ccl per ticker; diagnostic only, never sole blocking source",
+        "execution_policy": "bid/ask is executable only during Argentina market session and after sanity validation",
         "provider_stats": provider_stats,
         "comafi_ratio_registry_count": len(ratio_panel),
         "data912_ccl_reference_count": len(ccl_panel),
