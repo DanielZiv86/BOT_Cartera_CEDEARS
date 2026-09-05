@@ -1,4 +1,4 @@
-methodology_version: G4-1.0
+methodology_version: G4-1.1
 horizon_months: 12
 return_currency: USD_ECONOMIC_RETURN
 
@@ -22,6 +22,12 @@ penalties:
   correlation_penalty_max: 0.03
   concentration_penalty_max: 0.03
 
+target_review:
+  base_upside_review_threshold: 0.75
+  bull_upside_review_threshold: 1.25
+  high_low_dispersion_review_threshold: 1.00
+  behavior: FLAG_FOR_REVIEW_DO_NOT_OVERRIDE_G4_ECONOMIC_RESULT
+
 execution:
   brokerage_rate_per_side: 0.006
   analytical_g4_is_separate_from_execution_ready: true
@@ -33,3 +39,4 @@ policy_notes:
   - G4_PASS requires NetBenefit_vs_Cash >= minimum_margin_over_hurdle and Bear_Return_Net >= max_bear_downside.
   - A projected single-name weight above 20% is a hard G4 concentration failure.
   - Cash optimality is NOT_DEMONSTRATED while any material universe coverage remains blocked.
+  - A G4_PASS with extreme 12m target upside or analyst high-low dispersion is marked EXTREME_TARGET_REQUIRES_REVIEW and is excluded from g4_ranked_actionable until reviewed.
