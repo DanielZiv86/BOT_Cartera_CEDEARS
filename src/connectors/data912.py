@@ -10,6 +10,7 @@ class Data912CedearConnector:
     name = "data912"
     provider_tier = "APPROVED_MARKET_DATA_FALLBACK"
     url = "https://data912.com/live/arg_cedears"
+    ccl_url = "https://data912.com/live/ccl"
 
     def __init__(self, timeout: int = 30) -> None:
         self.timeout = timeout
@@ -21,23 +22,25 @@ class Data912CedearConnector:
                 return row[key]
         return None
 
-    def get_panel(self) -> dict[str, dict[str, Any]]:
-        response = requests.get(self.url, timeout=self.timeout, headers={"User-Agent": "CEDEAR-Data-Engine/1.0"})
-        response.raise_for_status()
-        payload = response.json()
+    @staticmethod
+    def _list_payload(payload: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
-            for key in ("data", "results", "cedears", "items"):
+            for key in keys:
                 if isinstance(payload.get(key), list):
                     payload = payload[key]
                     break
         if not isinstance(payload, list):
-            raise ValueError("Unexpected Data912 CEDEAR payload shape")
+            raise ValueError("Unexpected Data912 payload shape")
+        return [row for row in payload if isinstance(row, dict)]
+
+    def get_panel(self) -> dict[str, dict[str, Any]]:
+        response = requests.get(self.url, timeout=self.timeout, headers={"User-Agent": "CEDEAR-Data-Engine/1.0"})
+        response.raise_for_status()
+        payload = self._list_payload(response.json(), ("data", "results", "cedears", "items"))
 
         panel: dict[str, dict[str, Any]] = {}
         loaded_at = datetime.now(timezone.utc).isoformat()
         for raw in payload:
-            if not isinstance(raw, dict):
-                continue
             symbol = self._first(raw, "symbol", "ticker", "simbolo", "Símbolo", "especie")
             if not symbol:
                 continue
@@ -61,6 +64,31 @@ class Data912CedearConnector:
                 "source_ref": self.url,
                 "loaded_at": loaded_at,
                 "raw_keys": sorted(raw.keys()),
+            }
+        return panel
+
+    def get_ccl_panel(self) -> dict[str, dict[str, Any]]:
+        response = requests.get(self.ccl_url, timeout=self.timeout, headers={"User-Agent": "CEDEAR-Data-Engine/1.0"})
+        response.raise_for_status()
+        payload = self._list_payload(response.json(), ("data", "results", "ccl", "items"))
+        panel: dict[str, dict[str, Any]] = {}
+        loaded_at = datetime.now(timezone.utc).isoformat()
+        for raw in payload:
+            ticker_ar = self._first(raw, "ticker_ar", "symbol", "ticker")
+            if not ticker_ar:
+                continue
+            ticker = str(ticker_ar).strip().upper()
+            panel[ticker] = {
+                "cedear_ticker": ticker,
+                "ccl_reference_bid": _to_float(self._first(raw, "CCL_bid", "ccl_bid")),
+                "ccl_reference_ask": _to_float(self._first(raw, "CCL_ask", "ccl_ask")),
+                "ccl_reference_close": _to_float(self._first(raw, "CCL_close", "ccl_close")),
+                "ccl_reference_mark": _to_float(self._first(raw, "CCL_mark", "ccl_mark")),
+                "ccl_reference_ars_volume": _to_float(self._first(raw, "ars_volume", "volume")),
+                "ccl_reference_volume_rank": _to_float(self._first(raw, "volume_rank", "rank")),
+                "ccl_reference_provider": self.name,
+                "ccl_reference_source_ref": self.ccl_url,
+                "ccl_reference_loaded_at": loaded_at,
             }
         return panel
 
