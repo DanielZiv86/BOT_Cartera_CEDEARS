@@ -67,6 +67,7 @@ def build_etf_scenario(
     policy: dict[str, Any],
     as_of: date | None = None,
     constituent_cache: dict[str, ConstituentScenario] | None = None,
+    direct_lookup_budget: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
@@ -118,6 +119,7 @@ def build_etf_scenario(
     sorted_holdings = sorted(holdings, key=lambda x: as_float(x.get("percent")) or 0.0, reverse=True)[:max_holdings]
     min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
     min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
+    max_direct_per_etf = int(quality.get("maximum_direct_constituent_lookups_per_etf", 8))
 
     covered_weight = 0.0
     valid_count = 0
@@ -138,13 +140,29 @@ def build_etf_scenario(
             continue
         analyzed_count += 1
         weight = weight_pct / 100.0
-        (scenario, error), from_cache = _cached_holding_scenario_return(
-            h_symbol, connector, max_pt_age, as_of, constituent_cache
-        )
-        if from_cache:
-            shared_cache_hits += 1
+
+        from_existing_shared_cache = constituent_cache is not None and h_symbol in constituent_cache
+        if not from_existing_shared_cache:
+            global_remaining = direct_lookup_budget.get("remaining", 0) if direct_lookup_budget is not None else None
+            if direct_constituent_lookups >= max_direct_per_etf:
+                scenario, error = None, "ETF_DIRECT_LOOKUP_BUDGET_PER_FUND_EXHAUSTED"
+                from_cache = False
+            elif global_remaining is not None and global_remaining <= 0:
+                scenario, error = None, "ETF_DIRECT_LOOKUP_BUDGET_GLOBAL_EXHAUSTED"
+                from_cache = False
+            else:
+                if direct_lookup_budget is not None:
+                    direct_lookup_budget["remaining"] = global_remaining - 1
+                direct_constituent_lookups += 1
+                (scenario, error), from_cache = _cached_holding_scenario_return(
+                    h_symbol, connector, max_pt_age, as_of, constituent_cache
+                )
         else:
-            direct_constituent_lookups += 1
+            (scenario, error), from_cache = _cached_holding_scenario_return(
+                h_symbol, connector, max_pt_age, as_of, constituent_cache
+            )
+            shared_cache_hits += 1
+
         if scenario is None:
             holding_errors[error or "UNKNOWN"] = holding_errors.get(error or "UNKNOWN", 0) + 1
             continue
@@ -155,8 +173,6 @@ def build_etf_scenario(
         weighted_bear += weight * scenario["bear"]
         weighted_analysts += weight * scenario["analyst_count"]
 
-        # Once the deterministic coverage hurdle is met, additional holdings do
-        # not change eligibility and only consume provider quota.
         if covered_weight >= min_covered and valid_count >= min_valid:
             break
 
