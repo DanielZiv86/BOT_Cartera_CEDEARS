@@ -108,9 +108,12 @@ def main() -> int:
 
     rows_by_cedear: dict[str, dict] = {}
     equity_scenarios: dict[str, dict] = {}
-    # One lazy semantic cache for constituent scenarios across every ETF. It
-    # stores successes and failures so repeated holdings never hit Finnhub twice.
     constituent_cache: dict[str, ConstituentScenario] = {}
+    quality = policy.get("quality", {}) or {}
+    global_direct_limit = int(quality.get("maximum_global_direct_constituent_lookups", 40))
+    direct_lookup_budget = {"initial": global_direct_limit, "remaining": global_direct_limit}
+    provider_fallbacks = policy.get("provider_fallbacks", {}) or {}
+    premium_etf_fallback_enabled = bool(provider_fallbacks.get("finnhub_premium_etf_enabled", False))
     equity_count = 0
     etf_count = 0
     issuer_ready_count = 0
@@ -160,16 +163,18 @@ def main() -> int:
                 policy,
                 equity_scenarios=equity_scenarios,
                 constituent_cache=constituent_cache,
+                direct_lookup_budget=direct_lookup_budget,
             )
             if scenario.get("valuation_status") == "VALUATION_READY":
                 issuer_ready_count += 1
-            else:
+            elif premium_etf_fallback_enabled:
                 premium = build_etf_scenario(
                     underlying,
                     current_price,
                     finnhub,
                     policy,
                     constituent_cache=constituent_cache,
+                    direct_lookup_budget=direct_lookup_budget,
                 )
                 if premium.get("valuation_status") == "VALUATION_READY":
                     scenario = premium
@@ -226,18 +231,21 @@ def main() -> int:
         "etf_ready_count": etf_ready,
         "issuer_etf_ready_count": issuer_ready_count,
         "finnhub_premium_etf_ready_count": finnhub_etf_ready_count,
+        "finnhub_premium_etf_fallback_enabled": premium_etf_fallback_enabled,
         "non_equity_tracker_ready_count": non_equity_ready_count,
         "etf_cached_equity_valuations_used": cached_constituents,
         "etf_shared_constituent_cache_hits": shared_cache_hits,
         "etf_unique_constituents_cached": len(constituent_cache),
-        "etf_direct_finnhub_constituent_valuations_used": direct_constituents,
+        "etf_direct_finnhub_constituent_lookups": direct_constituents,
+        "etf_direct_lookup_budget_initial": direct_lookup_budget["initial"],
+        "etf_direct_lookup_budget_remaining": direct_lookup_budget["remaining"],
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "blocker_counts": blocker_counts,
         "blocker_tickers": blocker_tickers,
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through with one shared lazy constituent cache and deterministic early-stop; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA.",
+        "note": "Operating equities use Finnhub price-target screening; equity ETFs use issuer look-through, canonical equity scenarios first, a bounded shared direct-constituent budget, and deterministic early-stop. Finnhub Premium ETF fallback is disabled unless explicitly enabled. GLD/IBIT/ETHA use dedicated issuer-NAV stress models.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
