@@ -41,6 +41,7 @@ def build_issuer_etf_scenario(
     as_of: date | None = None,
     equity_scenarios: dict[str, dict[str, Any]] | None = None,
     constituent_cache: dict[str, ConstituentScenario] | None = None,
+    direct_lookup_budget: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
@@ -75,7 +76,8 @@ def build_issuer_etf_scenario(
         }
 
     holdings_age = age_days(snapshot.as_of, as_of=as_of)
-    max_holdings_age = int(freshness.get("etf_holdings_max_age_days", 35))
+    default_holdings_age = int(freshness.get("etf_holdings_max_age_days", 35))
+    max_holdings_age = snapshot.freshness_max_age_days or default_holdings_age
     if current_price is None or current_price <= 0:
         blockers.append("CURRENT_PRICE_MISSING")
     if holdings_age is None:
@@ -83,10 +85,12 @@ def build_issuer_etf_scenario(
     elif holdings_age < 0 or holdings_age > max_holdings_age:
         blockers.append("ETF_HOLDINGS_STALE")
 
-    max_holdings = int(quality.get("maximum_etf_holdings_to_analyze", 50))
+    default_max_holdings = int(quality.get("maximum_etf_holdings_to_analyze", 50))
+    max_holdings = snapshot.max_holdings_to_analyze or default_max_holdings
     sorted_holdings = sorted(snapshot.holdings, key=lambda x: float(x.get("percent") or 0), reverse=True)[:max_holdings]
     min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
     min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
+    max_direct_per_etf = int(quality.get("maximum_direct_constituent_lookups_per_etf", 8))
 
     covered_weight = 0.0
     valid_count = 0
@@ -119,13 +123,25 @@ def build_issuer_etf_scenario(
         if scenario is not None:
             cached_equity_count += 1
         else:
-            (scenario, error), from_cache = _cached_holding_scenario_return(
-                h_symbol, finnhub, max_pt_age, as_of, constituent_cache
-            )
-            if from_cache:
+            from_existing_shared_cache = constituent_cache is not None and h_symbol in constituent_cache
+            if not from_existing_shared_cache:
+                global_remaining = direct_lookup_budget.get("remaining", 0) if direct_lookup_budget is not None else None
+                if direct_finnhub_count >= max_direct_per_etf:
+                    scenario, error = None, "ETF_DIRECT_LOOKUP_BUDGET_PER_FUND_EXHAUSTED"
+                elif global_remaining is not None and global_remaining <= 0:
+                    scenario, error = None, "ETF_DIRECT_LOOKUP_BUDGET_GLOBAL_EXHAUSTED"
+                else:
+                    if direct_lookup_budget is not None:
+                        direct_lookup_budget["remaining"] = global_remaining - 1
+                    direct_finnhub_count += 1
+                    (scenario, error), _ = _cached_holding_scenario_return(
+                        h_symbol, finnhub, max_pt_age, as_of, constituent_cache
+                    )
+            else:
+                (scenario, error), _ = _cached_holding_scenario_return(
+                    h_symbol, finnhub, max_pt_age, as_of, constituent_cache
+                )
                 shared_cache_hits += 1
-            elif scenario is not None:
-                direct_finnhub_count += 1
 
         if scenario is None:
             holding_errors[error or "NO_READY_EQUITY_VALUATION"] = holding_errors.get(error or "NO_READY_EQUITY_VALUATION", 0) + 1
@@ -180,6 +196,7 @@ def build_issuer_etf_scenario(
         "current_price": current_price,
         "etf_holdings_date": snapshot.as_of,
         "etf_holdings_age_days": holdings_age,
+        "etf_holdings_max_age_days_applied": max_holdings_age,
         "etf_lookthrough_covered_weight": covered_weight,
         "etf_valid_holding_count": valid_count,
         "etf_analyzed_holding_count": analyzed_count,
