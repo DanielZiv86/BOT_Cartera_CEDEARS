@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,13 +10,15 @@ import pandas as pd
 import yaml
 
 from src.connectors.finnhub import FinnhubConnector
+from src.connectors.issuer_holdings import IssuerHoldingsConnector
 from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import build_etf_scenario
+from src.valuation.etf_issuer_engine import build_issuer_etf_scenario
 
 
 def _is_etf(cedear_ticker: str, instrument_type: object, issuer_name: object, policy: dict) -> bool:
     text = f"{instrument_type or ''} {issuer_name or ''}".upper()
-    if any(token in text for token in ("ETF", "ETP", "EXCHANGE TRADED FUND")):
+    if re.search(r"\bETF\b|\bETP\b|EXCHANGE\s+TRADED\s+FUND", text):
         return True
     overrides = policy.get("instrument_overrides", {}).get("etf_like_tickers", [])
     override_set = {str(t).strip().upper() for t in overrides if str(t).strip()}
@@ -27,15 +30,26 @@ def _price_map(prices: pd.DataFrame) -> dict[str, float]:
     ticker_col = "cedear_ticker" if "cedear_ticker" in frame.columns else "ticker"
     if ticker_col not in frame.columns:
         return {}
-    price_col = None
-    for candidate in ("last_close", "close", "adjusted_close", "current_price"):
-        if candidate in frame.columns:
-            price_col = candidate
-            break
+    price_col = next((c for c in ("last_close", "close", "adjusted_close", "current_price") if c in frame.columns), None)
     if price_col is None:
         return {}
     frame[price_col] = pd.to_numeric(frame[price_col], errors="coerce")
     return frame.dropna(subset=[price_col]).set_index(ticker_col)[price_col].astype(float).to_dict()
+
+
+def _load_issuer_sources(path: str) -> dict:
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    sources = raw.get("sources", {}) or {}
+    secondary_template = str(raw.get("secondary_template") or "").strip()
+    fallback_tickers = {str(t).upper() for t in raw.get("secondary_fallback_tickers", [])}
+    for ticker, cfg in sources.items():
+        if str(ticker).upper() in fallback_tickers and secondary_template and isinstance(cfg, dict) and "secondary" not in cfg:
+            cfg["secondary"] = {
+                "provider": "StockAnalysis",
+                "mode": "html_table",
+                "url": secondary_template.format(ticker=str(ticker).lower()),
+            }
+    return sources
 
 
 def main() -> int:
@@ -43,18 +57,22 @@ def main() -> int:
     parser.add_argument("--universe", required=True)
     parser.add_argument("--underlying-prices", required=True)
     parser.add_argument("--policy", default="config/valuation_policy.yml")
+    parser.add_argument("--etf-sources", default="config/etf_issuer_sources.yml")
     parser.add_argument("--output-dir", default="data/canonical/valuation")
     args = parser.parse_args()
 
     universe = pd.read_parquet(args.universe)
     prices = pd.read_parquet(args.underlying_prices)
     policy = yaml.safe_load(Path(args.policy).read_text(encoding="utf-8")) or {}
-    connector = FinnhubConnector()
+    finnhub = FinnhubConnector()
+    issuer_holdings = IssuerHoldingsConnector(_load_issuer_sources(args.etf_sources))
     prices_by_cedear = _price_map(prices)
 
     rows: list[dict] = []
     equity_count = 0
     etf_count = 0
+    issuer_ready_count = 0
+    finnhub_etf_ready_count = 0
     for _, item in universe.sort_values("cedear_ticker").iterrows():
         cedear = str(item.get("cedear_ticker") or "").upper()
         underlying = str(item.get("underlying_ticker") or cedear).upper()
@@ -62,11 +80,20 @@ def main() -> int:
         is_etf = _is_etf(cedear, item.get("instrument_type"), item.get("issuer_name"), policy)
         if is_etf:
             etf_count += 1
-            scenario = build_etf_scenario(underlying, current_price, connector, policy)
+            scenario = build_issuer_etf_scenario(underlying, current_price, finnhub, issuer_holdings, policy)
+            if scenario.get("valuation_status") == "VALUATION_READY":
+                issuer_ready_count += 1
+            else:
+                non_equity = {str(t).upper() for t in policy.get("instrument_overrides", {}).get("non_equity_trackers", [])}
+                if underlying not in non_equity:
+                    premium = build_etf_scenario(underlying, current_price, finnhub, policy)
+                    if premium.get("valuation_status") == "VALUATION_READY":
+                        scenario = premium
+                        finnhub_etf_ready_count += 1
             engine_type = "ETF"
         else:
             equity_count += 1
-            scenario = build_equity_scenario(underlying, current_price, connector, policy)
+            scenario = build_equity_scenario(underlying, current_price, finnhub, policy)
             engine_type = "EQUITY"
         scenario.update({
             "cedear_ticker": cedear,
@@ -101,7 +128,7 @@ def main() -> int:
         "layer": "Canonical Valuation Scenarios",
         "methodology_version": policy.get("methodology_version", "VAL-1.0"),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "finnhub_configured": connector.configured,
+        "finnhub_configured": finnhub.configured,
         "ticker_count": int(len(result)),
         "equity_count": equity_count,
         "etf_count": etf_count,
@@ -109,11 +136,13 @@ def main() -> int:
         "blocked_count": blocked,
         "equity_ready_count": equity_ready,
         "etf_ready_count": etf_ready,
+        "issuer_etf_ready_count": issuer_ready_count,
+        "finnhub_premium_etf_ready_count": finnhub_etf_ready_count,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "All 305 rows are emitted. Missing/stale material data remains BLOCKED_BY_DATA; no technical-price proxy is substituted for valuation.",
+        "note": "Issuer ETF look-through is primary. Missing/stale material data remains BLOCKED_BY_DATA; secondary holdings retain an explicit lower-confidence source tier.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
