@@ -23,6 +23,8 @@ POLICY = {
         "minimum_etf_covered_weight": 0.50,
         "minimum_etf_valid_holdings": 2,
         "maximum_etf_holdings_to_analyze": 10,
+        "maximum_direct_constituent_lookups_per_etf": 2,
+        "maximum_global_direct_constituent_lookups": 3,
     },
     "instrument_overrides": {
         "etf_like_tickers": ["GLD", "IBIT", "ETHA"],
@@ -193,12 +195,39 @@ def test_etf_shared_cache_reuses_constituents_across_funds():
     assert second["etf_shared_constituent_cache_hits"] == 2
 
 
+def test_global_direct_lookup_budget_blocks_new_uncached_constituents_without_calls():
+    connector = ETFConnector()
+    budget = {"initial": 1, "remaining": 1}
+    row = build_etf_scenario("ETF1", 100.0, connector, POLICY, as_of=date(2026, 9, 5), constituent_cache={}, direct_lookup_budget=budget)
+    assert connector.quote_calls == ["AAA"]
+    assert connector.target_calls == ["AAA"]
+    assert budget["remaining"] == 0
+    assert row["valuation_status"] == "BLOCKED_BY_DATA"
+    assert row["holding_error_counts"].get("ETF_DIRECT_LOOKUP_BUDGET_GLOBAL_EXHAUSTED", 0) >= 1
+
+
 def test_issuer_fallback_ready_with_official_holdings():
     row = build_issuer_etf_scenario("ETF1", 100.0, ETFConnector(), IssuerConnector(), POLICY, as_of=date(2026, 9, 5))
     assert row["valuation_status"] == "VALUATION_READY"
     assert row["valuation_method"] == "ISSUER_HOLDINGS_LOOKTHROUGH_V1"
     assert row["holdings_source_tier"] == "ISSUER_OFFICIAL"
     assert row["etf_lookthrough_covered_weight"] >= 0.50
+
+
+def test_issuer_specific_freshness_override_is_audited():
+    class SlowCadenceIssuer(IssuerConnector):
+        def fetch(self, symbol):
+            snapshot = super().fetch(symbol)
+            snapshot.as_of = "2026-07-01"
+            snapshot.freshness_max_age_days = 75
+            return snapshot
+    equity_cache = {
+        "AAA": {"valuation_status": "VALUATION_READY", "current_price": 100, "bull_target_price": 120, "base_target_price": 110, "bear_target_price": 90},
+        "BBB": {"valuation_status": "VALUATION_READY", "current_price": 100, "bull_target_price": 120, "base_target_price": 110, "bear_target_price": 90},
+    }
+    row = build_issuer_etf_scenario("ETF1", 100.0, ETFConnector(), SlowCadenceIssuer(), POLICY, as_of=date(2026, 9, 5), equity_scenarios=equity_cache)
+    assert row["valuation_status"] == "VALUATION_READY"
+    assert row["etf_holdings_max_age_days_applied"] == 75
 
 
 def test_non_equity_tracker_is_not_forced_through_equity_holdings():
