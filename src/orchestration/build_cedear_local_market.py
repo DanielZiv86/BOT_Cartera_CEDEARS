@@ -11,6 +11,7 @@ from src.connectors.comafi import ComafiRatioConnector
 from src.connectors.data912 import Data912CedearConnector
 from src.connectors.iol import IOLCedearConnector
 from src.market_data.cedear_local import build_local_market_layer, build_local_market_metrics
+from src.market_data.local_market_diagnostics import build_local_market_blocker_diagnostics
 
 
 def main() -> int:
@@ -88,6 +89,7 @@ def main() -> int:
         brokerage_rate=args.brokerage_rate,
     )
     metrics = build_local_market_metrics(layer)
+    blocker_diagnostics = build_local_market_blocker_diagnostics(layer)
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -120,9 +122,13 @@ def main() -> int:
     ratio_audit.to_json(out / "comafi_ratio_audit.json", orient="records", indent=2, force_ascii=False)
     ratio_audit.to_parquet(out / "comafi_ratio_audit.parquet", index=False)
 
+    (out / "local_market_blockers.json").write_text(
+        json.dumps(blocker_diagnostics, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
     manifest = {
         "layer": "CEDEAR Local Market + Implied CCL",
-        "version": "1.2",
+        "version": "1.3",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "brokerage_rate_per_side": args.brokerage_rate,
         "ratio_convention": "Comafi CEDEAR:underlying multiplier = numerator/denominator; implied_ccl = local_ARS * multiplier / underlying_USD",
@@ -134,6 +140,7 @@ def main() -> int:
         "provider_stats": provider_stats,
         "comafi_ratio_registry_count": len(ratio_panel),
         "data912_ccl_reference_count": len(ccl_panel),
+        "blocker_diagnostics": blocker_diagnostics,
         **metrics,
     }
     (out / "cedear_local_market_metrics.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
