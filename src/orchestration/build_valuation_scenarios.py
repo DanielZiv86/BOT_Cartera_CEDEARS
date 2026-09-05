@@ -14,7 +14,7 @@ from src.connectors.finnhub import FinnhubConnector
 from src.connectors.issuer_holdings import IssuerHoldingsConnector
 from src.connectors.non_equity_tracker import NonEquityTrackerConnector
 from src.valuation.equity_engine import build_equity_scenario
-from src.valuation.etf_engine import build_etf_scenario
+from src.valuation.etf_engine import ConstituentScenario, build_etf_scenario
 from src.valuation.etf_issuer_engine import build_issuer_etf_scenario
 from src.valuation.non_equity_tracker_engine import build_non_equity_tracker_scenario
 
@@ -108,6 +108,9 @@ def main() -> int:
 
     rows_by_cedear: dict[str, dict] = {}
     equity_scenarios: dict[str, dict] = {}
+    # One lazy semantic cache for constituent scenarios across every ETF. It
+    # stores successes and failures so repeated holdings never hit Finnhub twice.
+    constituent_cache: dict[str, ConstituentScenario] = {}
     equity_count = 0
     etf_count = 0
     issuer_ready_count = 0
@@ -156,11 +159,18 @@ def main() -> int:
                 issuer_holdings,
                 policy,
                 equity_scenarios=equity_scenarios,
+                constituent_cache=constituent_cache,
             )
             if scenario.get("valuation_status") == "VALUATION_READY":
                 issuer_ready_count += 1
             else:
-                premium = build_etf_scenario(underlying, current_price, finnhub, policy)
+                premium = build_etf_scenario(
+                    underlying,
+                    current_price,
+                    finnhub,
+                    policy,
+                    constituent_cache=constituent_cache,
+                )
                 if premium.get("valuation_status") == "VALUATION_READY":
                     scenario = premium
                     finnhub_etf_ready_count += 1
@@ -198,7 +208,9 @@ def main() -> int:
     equity_ready = int(((result["valuation_engine_type"] == "EQUITY") & (result["valuation_status"] == "VALUATION_READY")).sum()) if not result.empty else 0
     etf_ready = int(((result["valuation_engine_type"] == "ETF") & (result["valuation_status"] == "VALUATION_READY")).sum()) if not result.empty else 0
     cached_constituents = int(pd.to_numeric(result.get("etf_cached_equity_count"), errors="coerce").fillna(0).sum()) if "etf_cached_equity_count" in result else 0
+    shared_cache_hits = int(pd.to_numeric(result.get("etf_shared_constituent_cache_hits"), errors="coerce").fillna(0).sum()) if "etf_shared_constituent_cache_hits" in result else 0
     direct_constituents = int(pd.to_numeric(result.get("etf_direct_finnhub_count"), errors="coerce").fillna(0).sum()) if "etf_direct_finnhub_count" in result else 0
+    direct_constituents += int(pd.to_numeric(result.get("etf_direct_constituent_lookups"), errors="coerce").fillna(0).sum()) if "etf_direct_constituent_lookups" in result else 0
     metrics = {
         "layer": "Canonical Valuation Scenarios",
         "methodology_version": policy.get("methodology_version", "VAL-1.0"),
@@ -215,7 +227,9 @@ def main() -> int:
         "issuer_etf_ready_count": issuer_ready_count,
         "finnhub_premium_etf_ready_count": finnhub_etf_ready_count,
         "non_equity_tracker_ready_count": non_equity_ready_count,
-        "etf_cached_constituent_valuations_used": cached_constituents,
+        "etf_cached_equity_valuations_used": cached_constituents,
+        "etf_shared_constituent_cache_hits": shared_cache_hits,
+        "etf_unique_constituents_cached": len(constituent_cache),
         "etf_direct_finnhub_constituent_valuations_used": direct_constituents,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "blocker_counts": blocker_counts,
@@ -223,7 +237,7 @@ def main() -> int:
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA. Blockers are exported by code and ticker for deterministic remediation.",
+        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through with one shared lazy constituent cache and deterministic early-stop; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
