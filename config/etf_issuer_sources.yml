@@ -1,4 +1,4 @@
-version: ETF-SOURCES-1.0
+version: ETF-SOURCES-1.1
 secondary_template: "https://stockanalysis.com/etf/{ticker}/holdings/"
 sources:
   ARKK:
@@ -41,7 +41,7 @@ sources:
   IWM:
     primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"}
   IWDA:
-    primary: {provider: iShares, mode: html_table, url: "https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf"}
+    primary: {provider: BlackRock / iShares UCITS, mode: ishares_ucits_html, url: "https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf"}
 
   SPY:
     primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-500-etf-trust-spy"}
