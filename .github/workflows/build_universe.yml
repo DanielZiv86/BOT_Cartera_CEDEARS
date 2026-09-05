@@ -1,0 +1,55 @@
+name: Build Universe Master and Symbol Map
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "data/input/CEDEAR_Universe_Master_v2.json"
+      - "src/universe/**"
+      - "src/orchestration/build_universe.py"
+      - "config/symbol_aliases.yml"
+      - "tests/test_universe.py"
+      - ".github/workflows/build_universe.yml"
+
+jobs:
+  build-universe:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q tests/test_universe.py
+
+      - name: Check canonical source exists
+        run: |
+          test -f data/input/CEDEAR_Universe_Master_v2.json || \
+            (echo "Missing data/input/CEDEAR_Universe_Master_v2.json" && exit 2)
+
+      - name: Build canonical universe and symbol map
+        run: |
+          python -m src.orchestration.build_universe \
+            --input data/input/CEDEAR_Universe_Master_v2.json \
+            --aliases config/symbol_aliases.yml \
+            --output-dir data/canonical
+
+      - name: Upload universe artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-universe
+          path: |
+            data/canonical/cedear_universe_master.json
+            data/canonical/cedear_universe_master.parquet
+            data/canonical/security_symbol_map.json
+            data/canonical/security_symbol_map.parquet
+            data/canonical/universe_manifest.json
+          if-no-files-found: error
