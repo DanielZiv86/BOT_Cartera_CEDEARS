@@ -1,0 +1,25 @@
+version: INC-20260905-001
+effective_date: 2026-09-05
+reason_code: REQUIRED_CURRENT_PROGRAM_MISSING_FROM_BASELINE
+rows:
+  - cedear_ticker: VIG
+    underlying_ticker: VIG
+    issuer_name: VANGUARD DIVIDEND APPRECIATION ETF
+    instrument_type: ETF Share
+    ratio: 39
+    underlying_market: NYSE Arca
+    comafi_status: VALIDATED_CURRENT_PROGRAM
+    caja_byma_status: VALIDATED_BYMA_LAUNCH
+    eligible: true
+    exclusion_reason: null
+    mandate_exception: false
+    first_seen: 2025-05-15
+    last_verified: 2026-09-05
+    source_refs:
+      - https://www.byma.com.ar/en/newsroom/19-nuevos-cedears-habilitados-en-byma
+      - https://www.comafi.com.ar/custodiaglobal/Multimedios/pdfs/18338.pdf?v=3
+    source_dates:
+      - 2025-05-15
+      - 2026-03-31
+    universe_version: v2+INC-20260905-001
+    row_status: VALIDATED_OVERRIDE
