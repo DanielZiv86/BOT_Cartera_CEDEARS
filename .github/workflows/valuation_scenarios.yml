@@ -9,13 +9,16 @@ on:
     paths:
       - "src/connectors/finnhub.py"
       - "src/connectors/issuer_holdings.py"
+      - "src/connectors/non_equity_tracker.py"
       - "src/valuation/equity_engine.py"
       - "src/valuation/etf_engine.py"
       - "src/valuation/etf_issuer_engine.py"
+      - "src/valuation/non_equity_tracker_engine.py"
       - "src/valuation/common.py"
       - "src/orchestration/build_valuation_scenarios.py"
       - "config/valuation_policy.yml"
       - "config/etf_issuer_sources.yml"
+      - "config/non_equity_tracker_policy.yml"
       - "requirements.txt"
       - "tests/test_valuation_engines.py"
       - ".github/workflows/valuation_scenarios.yml"
@@ -72,6 +75,7 @@ jobs:
             --underlying-prices data/upstream_prices/underlying_prices.parquet \
             --policy config/valuation_policy.yml \
             --etf-sources config/etf_issuer_sources.yml \
+            --non-equity-policy config/non_equity_tracker_policy.yml \
             --output-dir data/canonical/valuation
 
       - name: Upload valuation artifacts
