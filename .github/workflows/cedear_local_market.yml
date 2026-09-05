@@ -6,11 +6,12 @@ on:
     workflows: ["Build Underlying Price Layer"]
     types: [completed]
   schedule:
-    - cron: "15 20 * * 1-5"
+    - cron: "30 19 * * 1-5"
   push:
     paths:
       - "src/connectors/iol.py"
       - "src/connectors/data912.py"
+      - "src/connectors/comafi.py"
       - "src/market_data/cedear_local.py"
       - "src/orchestration/build_cedear_local_market.py"
       - "tests/test_cedear_local_market.py"
@@ -78,6 +79,8 @@ jobs:
             data/canonical/local_market/cedear_local_market.parquet
             data/canonical/local_market/cedear_implied_ccl.json
             data/canonical/local_market/cedear_implied_ccl.parquet
+            data/canonical/local_market/comafi_ratio_audit.json
+            data/canonical/local_market/comafi_ratio_audit.parquet
             data/canonical/local_market/cedear_local_market_metrics.json
           if-no-files-found: error
           retention-days: 90
