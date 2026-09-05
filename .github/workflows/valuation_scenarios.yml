@@ -1,0 +1,81 @@
+name: Build Canonical Valuation Scenarios
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Underlying Price Layer"]
+    types: [completed]
+  push:
+    paths:
+      - "src/connectors/finnhub.py"
+      - "src/valuation/equity_engine.py"
+      - "src/valuation/etf_engine.py"
+      - "src/valuation/common.py"
+      - "src/orchestration/build_valuation_scenarios.py"
+      - "config/valuation_policy.yml"
+      - "tests/test_valuation_engines.py"
+      - ".github/workflows/valuation_scenarios.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-valuation-scenarios:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run valuation unit tests
+        run: pytest -q tests/test_valuation_engines.py
+
+      - name: Download latest canonical universe
+        run: |
+          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_universe
+          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
+          test -f data/upstream_universe/cedear_universe_master.parquet
+
+      - name: Download latest underlying prices
+        run: |
+          RUN_ID=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_prices
+          gh run download "$RUN_ID" --name underlying-price-layer --dir data/upstream_prices
+          test -f data/upstream_prices/underlying_prices.parquet
+
+      - name: Build Equity + ETF valuation scenarios
+        run: |
+          python -m src.orchestration.build_valuation_scenarios \
+            --universe data/upstream_universe/cedear_universe_master.parquet \
+            --underlying-prices data/upstream_prices/underlying_prices.parquet \
+            --policy config/valuation_policy.yml \
+            --output-dir data/canonical/valuation
+
+      - name: Upload valuation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-valuation-scenarios
+          path: |
+            data/canonical/valuation/valuation_scenarios.json
+            data/canonical/valuation/valuation_scenarios.parquet
+            data/canonical/valuation/valuation_scenarios_metrics.json
+          if-no-files-found: error
+          retention-days: 90
