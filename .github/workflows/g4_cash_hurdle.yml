@@ -1,0 +1,84 @@
+name: Build Valuation G4 Cash Hurdle
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "Build CEDEAR Local Market Layer"
+      - "Build Portfolio State Engine"
+    types: [completed]
+  push:
+    paths:
+      - "src/valuation/**"
+      - "src/orchestration/build_g4_cash_hurdle.py"
+      - "config/g4_policy.yml"
+      - "config/valuation_scenarios.schema.csv"
+      - "tests/test_g4_cash_hurdle.py"
+      - ".github/workflows/g4_cash_hurdle.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-g4:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run G4 unit tests
+        run: pytest -q tests/test_g4_cash_hurdle.py
+
+      - name: Download latest CEDEAR local market layer
+        run: |
+          RUN_ID=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_local
+          gh run download "$RUN_ID" --name cedear-local-market-layer --dir data/upstream_local
+          test -f data/upstream_local/cedear_local_market.parquet
+
+      - name: Download latest portfolio state layer
+        run: |
+          RUN_ID=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_portfolio
+          gh run download "$RUN_ID" --name portfolio-state-engine --dir data/upstream_portfolio
+          test -f data/upstream_portfolio/portfolio_fit_quantitative.parquet
+          test -f data/upstream_portfolio/portfolio_positions.parquet
+
+      - name: Build Valuation + G4 Cash Hurdle
+        run: |
+          python -m src.orchestration.build_g4_cash_hurdle \
+            --local-market data/upstream_local/cedear_local_market.parquet \
+            --valuation-inputs config/valuation_scenarios.schema.csv \
+            --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet \
+            --positions data/upstream_portfolio/portfolio_positions.parquet \
+            --policy config/g4_policy.yml \
+            --output-dir data/canonical/g4 \
+            --brokerage-rate 0.006
+
+      - name: Upload G4 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: valuation-g4-cash-hurdle
+          path: |
+            data/canonical/g4/g4_cash_hurdle.json
+            data/canonical/g4/g4_cash_hurdle.parquet
+            data/canonical/g4/g4_ranked_evaluated.json
+            data/canonical/g4/g4_manifest.json
+          if-no-files-found: error
+          retention-days: 90
