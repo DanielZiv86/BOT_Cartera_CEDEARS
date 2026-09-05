@@ -1,4 +1,4 @@
-methodology_version: VAL-1.1
+methodology_version: VAL-1.2
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -14,6 +14,11 @@ instrument_overrides:
   etf_like_tickers:
     - GLD
     - IBIT
+    - ETHA
+  non_equity_trackers:
+    - GLD
+    - IBIT
+    - ETHA
 probabilities:
   prior_bull: 0.25
   prior_base: 0.50
@@ -32,6 +37,7 @@ status_policy:
   missing_material_input: BLOCKED_BY_DATA
 notes:
   - Equity scenarios use Finnhub analyst price-target high/mean/low and recommendation trends.
-  - ETF scenarios use constituent look-through; uncovered holdings receive zero scenario return rather than being renormalized.
-  - GLD and IBIT are explicitly treated as ETF/ETP-like instruments rather than operating-company equities.
+  - ETF scenarios try Finnhub Premium look-through first and then official issuer holdings plus Finnhub constituent valuation.
+  - Secondary holdings sources are explicitly tagged and receive lower confidence; they never masquerade as issuer data.
+  - GLD, IBIT and ETHA are non-equity trackers and are not valued through equity constituent look-through.
   - Historical momentum is not used to fabricate valuation targets.
