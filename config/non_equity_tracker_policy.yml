@@ -1,0 +1,48 @@
+version: NET-1.0
+effective_date: "2026-09-05"
+max_issuer_nav_age_days: 10
+methodology: "Issuer NAV + explicit 12m asset stress scenarios + annual sponsor/expense fee"
+notes:
+  - "These are scenario models for non-equity trackers, not intrinsic equity valuations."
+  - "Scenario assumptions are explicit policy inputs and must be reviewed at least quarterly."
+  - "Historical momentum is not used to fabricate a target."
+trackers:
+  GLD:
+    asset: GOLD
+    provider: State Street / SPDR
+    issuer_url: "https://www.ssga.com/us/en/individual/etfs/spdr-gold-shares-gld"
+    annual_fee: 0.0040
+    confidence: 0.70
+    scenarios:
+      bull_return: 0.20
+      base_return: 0.05
+      bear_return: -0.15
+      bull_probability: 0.25
+      base_probability: 0.50
+      bear_probability: 0.25
+  IBIT:
+    asset: BITCOIN
+    provider: BlackRock / iShares
+    issuer_url: "https://www.ishares.com/us/products/333011/ishares-bitcoin-trust-etf"
+    annual_fee: 0.0025
+    confidence: 0.60
+    scenarios:
+      bull_return: 0.60
+      base_return: 0.15
+      bear_return: -0.45
+      bull_probability: 0.30
+      base_probability: 0.45
+      bear_probability: 0.25
+  ETHA:
+    asset: ETHER
+    provider: BlackRock / iShares
+    issuer_url: "https://www.ishares.com/us/products/337614/ishares-ethereum-trust"
+    annual_fee: 0.0025
+    confidence: 0.55
+    scenarios:
+      bull_return: 0.70
+      base_return: 0.20
+      bear_return: -0.55
+      bull_probability: 0.30
+      base_probability: 0.45
+      bear_probability: 0.25
