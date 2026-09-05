@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.orchestration.build_g4_cash_hurdle import _apply_global_governance
 from src.valuation.g4 import G4Policy, calculate_g4_cash_hurdle
 
 
@@ -96,3 +97,14 @@ def test_invalid_probabilities_block_ticker():
     result, _ = calculate_g4_cash_hurdle(_base_local(), valuation, _fit(), _positions())
     assert result.iloc[0]["g4_status"] == "BLOCKED_BY_DATA"
     assert "SCENARIO_PROBABILITIES_INVALID" in result.iloc[0]["g4_reason"]
+
+
+def test_incomplete_universe_blocks_global_deployment_even_with_passes():
+    governed = _apply_global_governance({
+        "ticker_count": 305,
+        "blocked_count": 80,
+        "pass_count": 90,
+        "deployment_decision": "ALLOW_NEW_DEPLOYMENT",
+    })
+    assert governed["deployment_decision"] == "RESEARCH_BLOCKED"
+    assert governed["ranking_status"] == "PARTIAL_NOT_ACTIONABLE"
