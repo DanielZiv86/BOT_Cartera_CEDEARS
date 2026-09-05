@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
   workflow_run:
     workflows:
+      - "Build Canonical Valuation Scenarios"
       - "Build CEDEAR Local Market Layer"
       - "Build Portfolio State Engine"
     types: [completed]
   push:
     paths:
-      - "src/valuation/**"
+      - "src/valuation/g4.py"
       - "src/orchestration/build_g4_cash_hurdle.py"
       - "config/g4_policy.yml"
-      - "config/valuation_scenarios.schema.csv"
       - "tests/test_g4_cash_hurdle.py"
       - ".github/workflows/g4_cash_hurdle.yml"
 
@@ -60,11 +60,19 @@ jobs:
           test -f data/upstream_portfolio/portfolio_fit_quantitative.parquet
           test -f data/upstream_portfolio/portfolio_positions.parquet
 
+      - name: Download latest canonical valuation scenarios
+        run: |
+          RUN_ID=$(gh run list --workflow valuation_scenarios.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          mkdir -p data/upstream_valuation
+          gh run download "$RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
+          test -f data/upstream_valuation/valuation_scenarios.parquet
+
       - name: Build Valuation + G4 Cash Hurdle
         run: |
           python -m src.orchestration.build_g4_cash_hurdle \
             --local-market data/upstream_local/cedear_local_market.parquet \
-            --valuation-inputs config/valuation_scenarios.schema.csv \
+            --valuation-inputs data/upstream_valuation/valuation_scenarios.parquet \
             --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet \
             --positions data/upstream_portfolio/portfolio_positions.parquet \
             --policy config/g4_policy.yml \
