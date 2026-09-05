@@ -1,0 +1,32 @@
+project:
+  name: BOT_Cartera_CEDEARS
+  timezone: America/Argentina/Buenos_Aires
+  base_currency: USD
+
+paths:
+  canonical: data/canonical
+  snapshots: data/snapshots
+  handoffs: data/handoffs
+  logs: logs
+
+pipeline:
+  universe_refresh_mode: delta
+  market_data_batch_size: 40
+  persist_snapshots: true
+  fail_on_data_quality_blocker: false
+
+sources:
+  universe_primary: comafi
+  universe_validation: byma
+  local_market_primary: iol
+  local_market_fallback: data912
+  underlying_market_primary: null
+  underlying_market_fallback: null
+
+quality:
+  max_price_staleness_days: 3
+  require_positive_prices: true
+  require_symbol_mapping: true
+
+# Secrets such as API keys, usernames and passwords must be provided
+# through GitHub Actions Secrets or environment variables, never here.
