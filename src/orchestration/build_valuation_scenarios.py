@@ -11,9 +11,11 @@ import yaml
 
 from src.connectors.finnhub import FinnhubConnector
 from src.connectors.issuer_holdings import IssuerHoldingsConnector
+from src.connectors.non_equity_tracker import NonEquityTrackerConnector
 from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import build_etf_scenario
 from src.valuation.etf_issuer_engine import build_issuer_etf_scenario
+from src.valuation.non_equity_tracker_engine import build_non_equity_tracker_scenario
 
 
 def _is_etf(cedear_ticker: str, instrument_type: object, issuer_name: object, policy: dict) -> bool:
@@ -58,14 +60,17 @@ def main() -> int:
     parser.add_argument("--underlying-prices", required=True)
     parser.add_argument("--policy", default="config/valuation_policy.yml")
     parser.add_argument("--etf-sources", default="config/etf_issuer_sources.yml")
+    parser.add_argument("--non-equity-policy", default="config/non_equity_tracker_policy.yml")
     parser.add_argument("--output-dir", default="data/canonical/valuation")
     args = parser.parse_args()
 
     universe = pd.read_parquet(args.universe).sort_values("cedear_ticker")
     prices = pd.read_parquet(args.underlying_prices)
     policy = yaml.safe_load(Path(args.policy).read_text(encoding="utf-8")) or {}
+    tracker_policy = yaml.safe_load(Path(args.non_equity_policy).read_text(encoding="utf-8")) or {}
     finnhub = FinnhubConnector()
     issuer_holdings = IssuerHoldingsConnector(_load_issuer_sources(args.etf_sources))
+    tracker_connector = NonEquityTrackerConnector(tracker_policy)
     prices_by_cedear = _price_map(prices)
 
     classified: list[tuple[pd.Series, bool]] = []
@@ -79,9 +84,8 @@ def main() -> int:
     etf_count = 0
     issuer_ready_count = 0
     finnhub_etf_ready_count = 0
+    non_equity_ready_count = 0
 
-    # Pass 1: operating-company equities. These scenarios become the canonical
-    # constituent cache for ETF look-through, avoiding duplicate Finnhub calls.
     for item, is_etf in classified:
         if is_etf:
             continue
@@ -99,8 +103,6 @@ def main() -> int:
         equity_scenarios[underlying] = scenario
         equity_count += 1
 
-    # Pass 2: ETFs/ETPs. Official issuer holdings are primary; the engine reuses
-    # the equity scenarios above and only calls Finnhub for missing constituents.
     non_equity = {str(t).upper() for t in policy.get("instrument_overrides", {}).get("non_equity_trackers", [])}
     for item, is_etf in classified:
         if not is_etf:
@@ -108,21 +110,33 @@ def main() -> int:
         cedear = str(item.get("cedear_ticker") or "").upper()
         underlying = str(item.get("underlying_ticker") or cedear).upper()
         current_price = prices_by_cedear.get(cedear)
-        scenario = build_issuer_etf_scenario(
-            underlying,
-            current_price,
-            finnhub,
-            issuer_holdings,
-            policy,
-            equity_scenarios=equity_scenarios,
-        )
-        if scenario.get("valuation_status") == "VALUATION_READY":
-            issuer_ready_count += 1
-        elif underlying not in non_equity:
-            premium = build_etf_scenario(underlying, current_price, finnhub, policy)
-            if premium.get("valuation_status") == "VALUATION_READY":
-                scenario = premium
-                finnhub_etf_ready_count += 1
+
+        if underlying in non_equity:
+            scenario = build_non_equity_tracker_scenario(
+                underlying,
+                current_price,
+                tracker_connector,
+                tracker_policy,
+            )
+            if scenario.get("valuation_status") == "VALUATION_READY":
+                non_equity_ready_count += 1
+        else:
+            scenario = build_issuer_etf_scenario(
+                underlying,
+                current_price,
+                finnhub,
+                issuer_holdings,
+                policy,
+                equity_scenarios=equity_scenarios,
+            )
+            if scenario.get("valuation_status") == "VALUATION_READY":
+                issuer_ready_count += 1
+            else:
+                premium = build_etf_scenario(underlying, current_price, finnhub, policy)
+                if premium.get("valuation_status") == "VALUATION_READY":
+                    scenario = premium
+                    finnhub_etf_ready_count += 1
+
         scenario.update({
             "cedear_ticker": cedear,
             "underlying_ticker": underlying,
@@ -169,13 +183,14 @@ def main() -> int:
         "etf_ready_count": etf_ready,
         "issuer_etf_ready_count": issuer_ready_count,
         "finnhub_premium_etf_ready_count": finnhub_etf_ready_count,
+        "non_equity_tracker_ready_count": non_equity_ready_count,
         "etf_cached_constituent_valuations_used": cached_constituents,
         "etf_direct_finnhub_constituent_valuations_used": direct_constituents,
         "coverage_pct": round(ready / len(result) * 100.0, 2) if len(result) else 0.0,
         "freshness_policy": policy.get("freshness", {}),
         "instrument_overrides": policy.get("instrument_overrides", {}),
         "pass_full_valuation": bool(len(result) > 0 and ready == len(result)),
-        "note": "Issuer ETF look-through is primary and reuses canonical equity valuations before any direct constituent API call. Missing/stale material data remains BLOCKED_BY_DATA.",
+        "note": "Operating equities use Finnhub; equity ETFs use issuer look-through; GLD/IBIT/ETHA use dedicated issuer-NAV stress models. Missing/stale material data remains BLOCKED_BY_DATA.",
     }
     (out / "valuation_scenarios_metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
