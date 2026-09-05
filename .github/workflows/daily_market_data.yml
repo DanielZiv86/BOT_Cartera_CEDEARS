@@ -1,0 +1,27 @@
+name: Daily Market Data Placeholder
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Placeholder: 21:30 UTC ~= 18:30 Argentina (UTC-3)
+    - cron: '30 21 * * 1-5'
+
+jobs:
+  daily-market-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Placeholder only
+        run: |
+          echo "Daily market-data workflow scaffold is active."
+          echo "No external market-data acquisition is implemented yet."
