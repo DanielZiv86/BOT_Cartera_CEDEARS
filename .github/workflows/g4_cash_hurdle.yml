@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - "src/valuation/g4.py"
+      - "src/valuation/g4_review.py"
       - "src/orchestration/build_g4_cash_hurdle.py"
       - "config/g4_policy.yml"
       - "tests/test_g4_cash_hurdle.py"
@@ -87,6 +88,7 @@ jobs:
             data/canonical/g4/g4_cash_hurdle.json
             data/canonical/g4/g4_cash_hurdle.parquet
             data/canonical/g4/g4_ranked_evaluated.json
+            data/canonical/g4/g4_ranked_actionable.json
             data/canonical/g4/g4_manifest.json
           if-no-files-found: error
           retention-days: 90
