@@ -1,4 +1,4 @@
-methodology_version: VAL-1.0
+methodology_version: VAL-1.1
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -10,6 +10,10 @@ quality:
   minimum_etf_covered_weight: 0.50
   minimum_etf_valid_holdings: 5
   maximum_etf_holdings_to_analyze: 50
+instrument_overrides:
+  etf_like_tickers:
+    - GLD
+    - IBIT
 probabilities:
   prior_bull: 0.25
   prior_base: 0.50
@@ -29,4 +33,5 @@ status_policy:
 notes:
   - Equity scenarios use Finnhub analyst price-target high/mean/low and recommendation trends.
   - ETF scenarios use constituent look-through; uncovered holdings receive zero scenario return rather than being renormalized.
+  - GLD and IBIT are explicitly treated as ETF/ETP-like instruments rather than operating-company equities.
   - Historical momentum is not used to fabricate valuation targets.
