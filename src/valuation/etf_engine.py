@@ -7,12 +7,15 @@ from src.connectors.finnhub import FinnhubAccessDenied, FinnhubConnector, Finnhu
 from src.valuation.common import age_days, as_float, normalized_probabilities
 
 
+ConstituentScenario = tuple[dict[str, float] | None, str | None]
+
+
 def _holding_scenario_return(
     holding_symbol: str,
     connector: FinnhubConnector,
     max_price_target_age_days: int,
     as_of: date | None,
-) -> tuple[dict[str, float] | None, str | None]:
+) -> ConstituentScenario:
     try:
         quote = connector.quote(holding_symbol)
         target = connector.price_target(holding_symbol)
@@ -41,12 +44,29 @@ def _holding_scenario_return(
     }, None
 
 
+def _cached_holding_scenario_return(
+    holding_symbol: str,
+    connector: FinnhubConnector,
+    max_price_target_age_days: int,
+    as_of: date | None,
+    constituent_cache: dict[str, ConstituentScenario] | None,
+) -> tuple[ConstituentScenario, bool]:
+    symbol = holding_symbol.strip().upper()
+    if constituent_cache is not None and symbol in constituent_cache:
+        return constituent_cache[symbol], True
+    result = _holding_scenario_return(symbol, connector, max_price_target_age_days, as_of)
+    if constituent_cache is not None:
+        constituent_cache[symbol] = result
+    return result, False
+
+
 def build_etf_scenario(
     symbol: str,
     current_price: float | None,
     connector: FinnhubConnector,
     policy: dict[str, Any],
     as_of: date | None = None,
+    constituent_cache: dict[str, ConstituentScenario] | None = None,
 ) -> dict[str, Any]:
     ticker = symbol.upper()
     blockers: list[str] = []
@@ -95,28 +115,36 @@ def build_etf_scenario(
         blockers.append("ETF_HOLDINGS_STALE")
 
     max_holdings = int(quality.get("maximum_etf_holdings_to_analyze", 50))
-    sorted_holdings = sorted(
-        holdings,
-        key=lambda x: as_float(x.get("percent")) or 0.0,
-        reverse=True,
-    )[:max_holdings]
+    sorted_holdings = sorted(holdings, key=lambda x: as_float(x.get("percent")) or 0.0, reverse=True)[:max_holdings]
+    min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
+    min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
 
     covered_weight = 0.0
     valid_count = 0
+    analyzed_count = 0
     weighted_bull = 0.0
     weighted_base = 0.0
     weighted_bear = 0.0
     weighted_analysts = 0.0
     holding_errors: dict[str, int] = {}
     max_pt_age = int(freshness.get("price_target_max_age_days", 45))
+    shared_cache_hits = 0
+    direct_constituent_lookups = 0
 
     for holding in sorted_holdings:
         h_symbol = str(holding.get("symbol") or "").strip().upper()
         weight_pct = as_float(holding.get("percent"))
         if not h_symbol or weight_pct is None or weight_pct <= 0:
             continue
+        analyzed_count += 1
         weight = weight_pct / 100.0
-        scenario, error = _holding_scenario_return(h_symbol, connector, max_pt_age, as_of)
+        (scenario, error), from_cache = _cached_holding_scenario_return(
+            h_symbol, connector, max_pt_age, as_of, constituent_cache
+        )
+        if from_cache:
+            shared_cache_hits += 1
+        else:
+            direct_constituent_lookups += 1
         if scenario is None:
             holding_errors[error or "UNKNOWN"] = holding_errors.get(error or "UNKNOWN", 0) + 1
             continue
@@ -127,8 +155,11 @@ def build_etf_scenario(
         weighted_bear += weight * scenario["bear"]
         weighted_analysts += weight * scenario["analyst_count"]
 
-    min_covered = float(quality.get("minimum_etf_covered_weight", 0.50))
-    min_valid = int(quality.get("minimum_etf_valid_holdings", 5))
+        # Once the deterministic coverage hurdle is met, additional holdings do
+        # not change eligibility and only consume provider quota.
+        if covered_weight >= min_covered and valid_count >= min_valid:
+            break
+
     if covered_weight < min_covered:
         blockers.append("ETF_LOOKTHROUGH_COVERAGE_INSUFFICIENT")
     if valid_count < min_valid:
@@ -136,14 +167,12 @@ def build_etf_scenario(
 
     dividend_yield = as_float((profile or {}).get("dividendYield"))
     if dividend_yield is not None:
-        # Finnhub ETF profile documents dividendYield; normalize percent-like values.
         if dividend_yield > 1.0:
             dividend_yield /= 100.0
         if dividend_yield < 0 or dividend_yield > 0.25:
             dividend_yield = None
     dividend_yield = dividend_yield or 0.0
 
-    # Uncovered holdings receive zero price return, intentionally conservative.
     bull_return = weighted_bull + covered_weight * dividend_yield
     base_return = weighted_base + covered_weight * dividend_yield
     bear_return = weighted_bear + covered_weight * dividend_yield
@@ -165,7 +194,6 @@ def build_etf_scenario(
         float(policy.get("probabilities", {}).get("prior_bear", 0.25)),
     )
     probs = normalized_probabilities(prior)
-
     valuation_status = "VALUATION_READY" if not blockers else "BLOCKED_BY_DATA"
     return {
         "underlying_ticker": ticker,
@@ -183,12 +211,14 @@ def build_etf_scenario(
         "etf_holdings_age_days": holdings_age,
         "etf_lookthrough_covered_weight": covered_weight,
         "etf_valid_holding_count": valid_count,
-        "etf_analyzed_holding_count": len(sorted_holdings),
+        "etf_analyzed_holding_count": analyzed_count,
+        "etf_shared_constituent_cache_hits": shared_cache_hits,
+        "etf_direct_constituent_lookups": direct_constituent_lookups,
         "weighted_analyst_count_proxy": weighted_analysts,
         "etf_dividend_yield": dividend_yield,
         "holding_error_counts": holding_errors,
         "blockers": blockers,
         "source_date": holdings_date,
-        "source_ref": "Finnhub /etf/profile + /etf/holdings + constituent /quote + /stock/price-target",
+        "source_ref": "Finnhub /etf/profile + /etf/holdings + shared constituent cache",
         "retrieved_at": connector.retrieved_at(),
     }
