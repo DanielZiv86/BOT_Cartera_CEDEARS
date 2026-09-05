@@ -1,0 +1,109 @@
+version: ETF-SOURCES-1.0
+secondary_template: "https://stockanalysis.com/etf/{ticker}/holdings/"
+sources:
+  ARKK:
+    primary: {provider: ARK Invest, mode: html_table, url: "https://www.ark-funds.com/funds/arkk"}
+  CIBR:
+    primary: {provider: First Trust, mode: html_table, url: "https://www.ftportfolios.com/Retail/Etf/EtfSummary.aspx?Ticker=CIBR"}
+  QQQ:
+    primary: {provider: Invesco, mode: html_table, url: "https://www.invesco.com/us/financial-products/etfs/product-detail?audienceType=Investor&ticker=QQQ"}
+  RSP:
+    primary: {provider: Invesco, mode: html_table, url: "https://www.invesco.com/us/financial-products/etfs/product-detail?audienceType=Investor&ticker=RSP"}
+  VEA:
+    primary: {provider: Vanguard, mode: html_table, url: "https://advisors.vanguard.com/investments/products/vea/vanguard-ftse-developed-markets-etf"}
+  VIG:
+    primary: {provider: Vanguard, mode: html_table, url: "https://advisors.vanguard.com/investments/products/vig/vanguard-dividend-appreciation-etf"}
+  SMH:
+    primary: {provider: VanEck, mode: html_table, url: "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/holdings/"}
+  URA:
+    primary: {provider: Global X, mode: html_table, url: "https://www.globalxetfs.com/funds/ura"}
+
+  EEM:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239637/ishares-msci-emerging-markets-etf"}
+  EWY:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239681/ishares-msci-south-korea-etf"}
+  EWZ:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239612/ishares-msci-brazil-etf"}
+  FXI:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239536/ishares-china-largecap-etf"}
+  IBB:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239699/ishares-biotechnology-etf"}
+  ICLN:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239738/ishares-global-clean-energy-etf"}
+  IEUR:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/264617/ishares-core-msci-europe-etf"}
+  ITA:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239502/ishares-us-aerospace-defense-etf"}
+  IVE:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239728/ishares-sp-500-value-etf"}
+  IVW:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239725/ishares-sp-500-growth-etf"}
+  IWM:
+    primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"}
+  IWDA:
+    primary: {provider: iShares, mode: html_table, url: "https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf"}
+
+  SPY:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-500-etf-trust-spy"}
+  DIA:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia"}
+  XLB:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-materials-select-sector-spdr-fund-xlb"}
+  XLC:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-communication-services-select-sector-spdr-fund-xlc"}
+  XLE:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-energy-select-sector-spdr-fund-xle"}
+  XLF:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-financial-select-sector-spdr-fund-xlf"}
+  XLI:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-industrial-select-sector-spdr-fund-xli"}
+  XLK:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-technology-select-sector-spdr-fund-xlk"}
+  XLP:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-consumer-staples-select-sector-spdr-fund-xlp"}
+  XLRE:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-real-estate-select-sector-spdr-fund-xlre"}
+  XLU:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-utilities-select-sector-spdr-fund-xlu"}
+  XLV:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-health-care-select-sector-spdr-fund-xlv"}
+  XLY:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/the-consumer-discretionary-select-sector-spdr-fund-xly"}
+  XME:
+    primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-metals-mining-etf-xme"}
+
+secondary_fallback_tickers:
+  - ARKK
+  - CIBR
+  - DIA
+  - EEM
+  - EWY
+  - EWZ
+  - FXI
+  - IBB
+  - ICLN
+  - IEUR
+  - ITA
+  - IVE
+  - IVW
+  - IWDA
+  - IWM
+  - QQQ
+  - RSP
+  - SMH
+  - SPY
+  - URA
+  - VEA
+  - VIG
+  - XLB
+  - XLC
+  - XLE
+  - XLF
+  - XLI
+  - XLK
+  - XLP
+  - XLRE
+  - XLU
+  - XLV
+  - XLY
+  - XME
