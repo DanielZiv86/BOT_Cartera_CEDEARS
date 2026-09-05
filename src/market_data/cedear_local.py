@@ -24,7 +24,7 @@ def _book_sanity(out: pd.DataFrame) -> pd.Series:
     ask = out["ask_ars"]
     mid = (bid + ask) / 2.0
     spread = (ask - bid) / mid
-    valid = (
+    return (
         last.gt(0)
         & bid.gt(0)
         & ask.gt(0)
@@ -33,7 +33,6 @@ def _book_sanity(out: pd.DataFrame) -> pd.Series:
         & ask.div(last).between(0.50, 1.50)
         & spread.between(0.0, 0.25)
     )
-    return valid
 
 
 def build_local_market_layer(
@@ -45,16 +44,13 @@ def build_local_market_layer(
     brokerage_rate: float = 0.006,
     now: datetime | None = None,
 ) -> pd.DataFrame:
-    required_u = {"cedear_ticker", "ratio"}
-    required_p = {"cedear_ticker", "last_close", "currency", "freshness_status"}
-    if not required_u.issubset(universe.columns):
+    if not {"cedear_ticker", "ratio"}.issubset(universe.columns):
         raise ValueError("universe missing cedear_ticker/ratio")
-    if not required_p.issubset(underlying_prices.columns):
+    if not {"cedear_ticker", "last_close", "currency", "freshness_status"}.issubset(underlying_prices.columns):
         raise ValueError("underlying prices missing required fields")
 
     base_cols = {"cedear_ticker", "ratio", "instrument_type", "underlying_market", "underlying_ticker", "canonical_underlying"}
-    base = universe[[c for c in universe.columns if c in base_cols]].copy()
-    base = base.rename(columns={"ratio": "universe_ratio"})
+    base = universe[[c for c in universe.columns if c in base_cols]].copy().rename(columns={"ratio": "universe_ratio"})
     base["cedear_ticker"] = base["cedear_ticker"].astype(str).str.upper()
 
     px_cols = {"cedear_ticker", "last_close", "last_close_date", "currency", "freshness_status", "provider_selected"}
@@ -65,7 +61,6 @@ def build_local_market_layer(
     if quotes.empty:
         quotes = pd.DataFrame({"cedear_ticker": base["cedear_ticker"]})
     quotes["cedear_ticker"] = quotes["cedear_ticker"].astype(str).str.upper()
-
     out = base.merge(px, on="cedear_ticker", how="left").merge(quotes, on="cedear_ticker", how="left")
 
     if ratio_registry is not None and not ratio_registry.empty:
@@ -89,10 +84,10 @@ def build_local_market_layer(
             out[col] = np.nan
         out[col] = pd.to_numeric(out[col], errors="coerce")
 
-    out["ratio_status"] = "RATIO_UNVERIFIED_COMAFI"
-    comafi_ok = out["comafi_ratio_multiplier"].gt(0) & ~out.get("ratio_conflict", pd.Series(False, index=out.index)).fillna(False).astype(bool)
-    out.loc[comafi_ok, "ratio_status"] = "RATIO_VALIDATED_COMAFI"
     conflict = out.get("ratio_conflict", pd.Series(False, index=out.index)).fillna(False).astype(bool)
+    comafi_ok = out["comafi_ratio_multiplier"].gt(0) & ~conflict
+    out["ratio_status"] = "RATIO_UNVERIFIED_COMAFI"
+    out.loc[comafi_ok, "ratio_status"] = "RATIO_VALIDATED_COMAFI"
     out.loc[conflict, "ratio_status"] = "RATIO_BLOCKED_CONFLICT"
     out["ratio_used"] = out["comafi_ratio_multiplier"].where(comafi_ok, out["universe_ratio"])
     out["ratio_deviation_vs_universe_pct"] = (
@@ -105,7 +100,6 @@ def build_local_market_layer(
     out["book_sanity_status"] = "BOOK_INVALID_SANITY"
     out.loc[sane_book, "book_sanity_status"] = "BOOK_SANITY_PASS"
     out.loc[out["bid_ars"].isna() | out["ask_ars"].isna(), "book_sanity_status"] = "BOOK_UNAVAILABLE"
-
     out["validated_mid_ars"] = raw_mid.where(sane_book)
     out["spread_ars"] = (out["ask_ars"] - out["bid_ars"]).where(sane_book)
     out["spread_pct"] = raw_spread.where(sane_book)
@@ -117,7 +111,6 @@ def build_local_market_layer(
     if session_status == "SESSION_OPEN_BY_CLOCK":
         out["execution_book_status"] = "BOOK_INVALID_OR_UNAVAILABLE"
         out.loc[sane_book, "execution_book_status"] = "BOOK_EXECUTABLE_BY_SANITY"
-
     executable = sane_book & (session_status == "SESSION_OPEN_BY_CLOCK")
     out["executable_buy_ars"] = out["ask_ars"].where(executable)
     out["executable_sell_ars"] = out["bid_ars"].where(executable)
@@ -138,19 +131,32 @@ def build_local_market_layer(
     )
     out["implied_ccl"] = np.nan
     out.loc[valid_ccl, "implied_ccl"] = (
-        out.loc[valid_ccl, "analytical_local_ref_ars"]
-        * out.loc[valid_ccl, "ratio_used"]
-        / out.loc[valid_ccl, "last_close"]
+        out.loc[valid_ccl, "analytical_local_ref_ars"] * out.loc[valid_ccl, "ratio_used"] / out.loc[valid_ccl, "last_close"]
     )
 
+    # Primary cross-check: robust market CCL from the cross-section of official Comafi ratios.
+    consensus_pool = out.loc[
+        valid_ccl & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI") & out["implied_ccl"].gt(0),
+        "implied_ccl",
+    ]
+    market_ccl = float(consensus_pool.median()) if not consensus_pool.empty else np.nan
+    out["market_ccl_reference"] = market_ccl
+    out["ccl_deviation_vs_market_pct"] = (out["implied_ccl"] / market_ccl - 1.0) if np.isfinite(market_ccl) and market_ccl > 0 else np.nan
+    market_abs_dev = out["ccl_deviation_vs_market_pct"].abs()
+    out["market_ccl_crosscheck_status"] = "MARKET_CCL_CROSSCHECK_UNAVAILABLE"
+    out.loc[market_abs_dev.le(0.05), "market_ccl_crosscheck_status"] = "MARKET_CCL_CROSSCHECK_PASS"
+    out.loc[market_abs_dev.gt(0.05) & market_abs_dev.le(0.10), "market_ccl_crosscheck_status"] = "MARKET_CCL_CROSSCHECK_WARNING"
+    out.loc[market_abs_dev.gt(0.10), "market_ccl_crosscheck_status"] = "MARKET_CCL_CROSSCHECK_BLOCKED"
+
+    # Secondary diagnostic only: Data912 per-ticker CCL can be internally inconsistent for some ADRs/ratios.
     out["ccl_deviation_vs_data912_pct"] = (
         out["implied_ccl"] / out["ccl_reference_mark"] - 1.0
     ).where(out["implied_ccl"].gt(0) & out["ccl_reference_mark"].gt(0))
-    abs_dev = out["ccl_deviation_vs_data912_pct"].abs()
-    out["ccl_crosscheck_status"] = "CCL_CROSSCHECK_UNAVAILABLE"
-    out.loc[abs_dev.le(0.05), "ccl_crosscheck_status"] = "CCL_CROSSCHECK_PASS"
-    out.loc[abs_dev.gt(0.05) & abs_dev.le(0.10), "ccl_crosscheck_status"] = "CCL_CROSSCHECK_WARNING"
-    out.loc[abs_dev.gt(0.10), "ccl_crosscheck_status"] = "CCL_CROSSCHECK_BLOCKED"
+    data912_abs_dev = out["ccl_deviation_vs_data912_pct"].abs()
+    out["data912_ccl_diagnostic_status"] = "DATA912_CCL_DIAGNOSTIC_UNAVAILABLE"
+    out.loc[data912_abs_dev.le(0.05), "data912_ccl_diagnostic_status"] = "DATA912_CCL_DIAGNOSTIC_ALIGNED"
+    out.loc[data912_abs_dev.gt(0.05) & data912_abs_dev.le(0.10), "data912_ccl_diagnostic_status"] = "DATA912_CCL_DIAGNOSTIC_WARNING"
+    out.loc[data912_abs_dev.gt(0.10), "data912_ccl_diagnostic_status"] = "DATA912_CCL_DIAGNOSTIC_DIVERGENT"
 
     out["local_price_status"] = "LOCAL_PRICE_BLOCKED"
     out.loc[out["last_price_ars"].gt(0), "local_price_status"] = "LOCAL_PRICE_READY"
@@ -158,18 +164,21 @@ def build_local_market_layer(
     out["ccl_status"] = "CCL_BLOCKED"
     ccl_calc = out["implied_ccl"].gt(0)
     out.loc[ccl_calc, "ccl_status"] = "CCL_READY_UNVERIFIED"
-    out.loc[ccl_calc & out["ccl_crosscheck_status"].eq("CCL_CROSSCHECK_PASS") & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI"), "ccl_status"] = "CCL_READY_VALIDATED"
-    out.loc[ccl_calc & out["ccl_crosscheck_status"].eq("CCL_CROSSCHECK_WARNING"), "ccl_status"] = "CCL_WARNING_CROSSCHECK"
-    out.loc[out["ccl_crosscheck_status"].eq("CCL_CROSSCHECK_BLOCKED"), "ccl_status"] = "CCL_BLOCKED_CROSSCHECK"
+    out.loc[
+        ccl_calc & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI") & out["market_ccl_crosscheck_status"].eq("MARKET_CCL_CROSSCHECK_PASS"),
+        "ccl_status",
+    ] = "CCL_READY_VALIDATED"
+    out.loc[
+        ccl_calc & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI") & out["market_ccl_crosscheck_status"].eq("MARKET_CCL_CROSSCHECK_WARNING"),
+        "ccl_status",
+    ] = "CCL_WARNING_MARKET_DEVIATION"
+    out.loc[out["market_ccl_crosscheck_status"].eq("MARKET_CCL_CROSSCHECK_BLOCKED"), "ccl_status"] = "CCL_BLOCKED_MARKET_DEVIATION"
     out.loc[conflict, "ccl_status"] = "CCL_BLOCKED_RATIO_CONFLICT"
 
     out["valuation_g4_local_gate"] = "BLOCKED"
-    out.loc[
-        out["local_price_status"].eq("LOCAL_PRICE_READY")
-        & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI")
-        & out["ccl_status"].isin(["CCL_READY_VALIDATED", "CCL_WARNING_CROSSCHECK"]),
-        "valuation_g4_local_gate",
-    ] = "PASS_WITH_VALIDATED_LOCAL_DATA"
+    pass_base = out["local_price_status"].eq("LOCAL_PRICE_READY") & out["ratio_status"].eq("RATIO_VALIDATED_COMAFI")
+    out.loc[pass_base & out["ccl_status"].eq("CCL_READY_VALIDATED"), "valuation_g4_local_gate"] = "PASS"
+    out.loc[pass_base & out["ccl_status"].eq("CCL_WARNING_MARKET_DEVIATION"), "valuation_g4_local_gate"] = "PASS_WITH_WARNING"
 
     out["loaded_at_layer"] = datetime.now(timezone.utc).isoformat()
     return out.sort_values("cedear_ticker").reset_index(drop=True)
@@ -182,8 +191,10 @@ def build_local_market_metrics(frame: pd.DataFrame) -> dict:
     executable_books = int((frame["execution_book_status"] == "BOOK_EXECUTABLE_BY_SANITY").sum())
     ratio_validated = int((frame["ratio_status"] == "RATIO_VALIDATED_COMAFI").sum())
     ccl_validated = int((frame["ccl_status"] == "CCL_READY_VALIDATED").sum())
-    ccl_blocked_crosscheck = int((frame["ccl_status"] == "CCL_BLOCKED_CROSSCHECK").sum())
-    g4_pass = int((frame["valuation_g4_local_gate"] == "PASS_WITH_VALIDATED_LOCAL_DATA").sum())
+    ccl_warning = int((frame["ccl_status"] == "CCL_WARNING_MARKET_DEVIATION").sum())
+    ccl_blocked = int((frame["ccl_status"] == "CCL_BLOCKED_MARKET_DEVIATION").sum())
+    g4_pass = int(frame["valuation_g4_local_gate"].isin(["PASS", "PASS_WITH_WARNING"]).sum())
+    market_ref = pd.to_numeric(frame.get("market_ccl_reference"), errors="coerce").dropna()
     return {
         "Eligible_Count": total,
         "Local_Price_Ready_Count": price_ready,
@@ -191,8 +202,10 @@ def build_local_market_metrics(frame: pd.DataFrame) -> dict:
         "Executable_Book_Count": executable_books,
         "Comafi_Ratio_Validated_Count": ratio_validated,
         "Implied_CCL_Validated_Count": ccl_validated,
-        "CCL_Blocked_Crosscheck_Count": ccl_blocked_crosscheck,
+        "Implied_CCL_Warning_Count": ccl_warning,
+        "CCL_Blocked_Market_Deviation_Count": ccl_blocked,
         "Valuation_G4_Local_Gate_Pass_Count": g4_pass,
+        "Market_CCL_Reference": float(market_ref.iloc[0]) if not market_ref.empty else None,
         "Local_Price_Coverage_Pct": round(price_ready / total * 100, 4) if total else 0.0,
         "Comafi_Ratio_Coverage_Pct": round(ratio_validated / total * 100, 4) if total else 0.0,
         "Validated_CCL_Coverage_Pct": round(ccl_validated / total * 100, 4) if total else 0.0,
@@ -200,5 +213,5 @@ def build_local_market_metrics(frame: pd.DataFrame) -> dict:
         "Market_Session_Status": frame["market_session_status"].iloc[0] if total else None,
         "PASS_LOCAL_PRICE_LAYER": price_ready == total and total > 0,
         "PASS_COMAFI_RATIO_LAYER": ratio_validated == total and total > 0,
-        "PASS_VALIDATED_CCL_LAYER": ccl_validated == total and total > 0,
+        "PASS_VALIDATED_CCL_LAYER": (ccl_validated + ccl_warning) == total and total > 0,
     }
