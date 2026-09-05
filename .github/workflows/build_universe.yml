@@ -5,11 +5,6 @@ on:
   push:
     paths:
       - "data/input/CEDEAR_Universe_Master_v2.json"
-      - "src/universe/**"
-      - "src/orchestration/build_universe.py"
-      - "config/symbol_aliases.yml"
-      - "tests/test_universe.py"
-      - ".github/workflows/build_universe.yml"
 
 jobs:
   build-universe:
