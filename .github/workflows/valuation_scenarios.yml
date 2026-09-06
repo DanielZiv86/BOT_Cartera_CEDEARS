@@ -22,6 +22,8 @@ on:
       - "requirements.txt"
       - "tests/test_valuation_engines.py"
       - "tests/test_valuation_v17.py"
+      - "tests/test_finnhub_symbol_normalization.py"
+      - "tests/test_vanguard_holdings_parser.py"
       - ".github/workflows/valuation_scenarios.yml"
 
 concurrency:
@@ -55,7 +57,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run valuation unit tests
-        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py
+        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
 
       - name: Download latest canonical universe
         run: |
