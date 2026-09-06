@@ -15,6 +15,9 @@ providers:
     AKO.B: AKO-B.US
     VIST US: VIST.US
     IWDA: IWDA.UK
+  finnhub:
+    BRK/B: BRK.B
+    BRKB: BRK.B
   iol:
     BRK/B: BRKB
     BRK.B: BRKB
