@@ -15,10 +15,11 @@ SCREENING_COMPONENTS = (
 def _percentile_score(series: pd.Series, *, higher_is_better: bool) -> pd.Series:
     """Cross-sectional percentile score in [0, 1], preserving missing values."""
     numeric = pd.to_numeric(series, errors="coerce")
-    ranked = numeric.rank(method="average", pct=True, ascending=higher_is_better)
+    ranked = numeric.rank(method="average", pct=True, ascending=True)
     if higher_is_better:
         return ranked
-    return 1.0 - ranked + (1.0 / numeric.notna().sum() if numeric.notna().sum() else 0.0)
+    valid_count = int(numeric.notna().sum())
+    return 1.0 - ranked + (1.0 / valid_count if valid_count else 0.0)
 
 
 def build_screening_scores(
