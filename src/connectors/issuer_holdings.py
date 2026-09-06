@@ -77,7 +77,10 @@ class IssuerHoldingsConnector:
                 self._cache[symbol] = snapshot
                 return snapshot
             except Exception as exc:  # noqa: BLE001
-                attempts.append(f"PRIMARY:{type(exc).__name__}:{exc}")
+                primary_error = f"PRIMARY:{type(exc).__name__}:{exc}"
+                attempts.append(primary_error)
+                if str(primary.get("provider") or "").strip().lower() == "vanguard":
+                    print(f"VANGUARD_PRIMARY_DIAGNOSTIC ticker={symbol} error={primary_error}")
 
         secondary = cfg.get("secondary")
         if isinstance(secondary, dict):
@@ -180,10 +183,26 @@ class IssuerHoldingsConnector:
         return candidates[0][1], self._extract_date(text)
 
     def _fetch_vanguard_html(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
-        """Select Vanguard's actual holdings table, not other portfolio percentage tables."""
+        """Select Vanguard's actual holdings table and expose minimal acquisition diagnostics."""
         response = self._get(url)
         text = response.text
-        tables = pd.read_html(io.StringIO(text))
+        try:
+            tables = pd.read_html(io.StringIO(text))
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "VANGUARD_HTTP_DIAGNOSTIC "
+                f"status={response.status_code} html_bytes={len(response.content)} "
+                f"table_parse_error={type(exc).__name__}:{exc}"
+            )
+            raise
+
+        column_sets = [[str(c).strip() for c in table.columns] for table in tables]
+        print(
+            "VANGUARD_HTTP_DIAGNOSTIC "
+            f"status={response.status_code} html_bytes={len(response.content)} "
+            f"tables={len(tables)} columns={column_sets}"
+        )
+
         candidates: list[tuple[int, list[dict[str, Any]]]] = []
         for table in tables:
             columns = [str(c).strip().lower() for c in table.columns]
