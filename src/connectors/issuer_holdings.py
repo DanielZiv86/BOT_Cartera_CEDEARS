@@ -202,13 +202,19 @@ class IssuerHoldingsConnector:
         lower = {str(c).strip().lower(): c for c in df.columns}
 
         ticker_col = next((orig for key, orig in lower.items() if key in {"ticker", "symbol", "issuer ticker"} or "ticker" in key), None)
+        holdings_name_col = next((orig for key, orig in lower.items() if key in {"holding", "holdings"}), None)
         weight_col = next((orig for key, orig in lower.items() if "weight" in key or "% of fund" in key or "% of funds" in key or "% of net assets" in key or "holding percent" in key), None)
-        if ticker_col is None or weight_col is None:
+        if (ticker_col is None and holdings_name_col is None) or weight_col is None:
             return []
 
         rows: list[dict[str, Any]] = []
         for _, row in df.iterrows():
-            symbol = str(row.get(ticker_col) or "").strip().upper()
+            if ticker_col is not None:
+                symbol = str(row.get(ticker_col) or "").strip().upper()
+            else:
+                holding_name = str(row.get(holdings_name_col) or "").strip()
+                match = re.search(r"\(([A-Za-z0-9.\-/]+)\)\s*$", holding_name)
+                symbol = match.group(1).upper() if match else ""
             if not symbol or symbol in {"NAN", "--", "-", "CASH", "USD"} or "CASH" in symbol:
                 continue
             raw_weight = str(row.get(weight_col) or "").replace("%", "").replace(",", "").strip()
