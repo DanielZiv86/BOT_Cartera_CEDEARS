@@ -46,6 +46,12 @@ class FinnhubConnector:
     def configured(self) -> bool:
         return bool(self.token)
 
+    @staticmethod
+    def _provider_symbol(symbol: str) -> str:
+        """Normalize canonical symbols only where Finnhub uses different notation."""
+        ticker = str(symbol).strip().upper()
+        return {"BRK/B": "BRK.B", "BRKB": "BRK.B"}.get(ticker, ticker)
+
     def _get(self, endpoint: str, **params: Any) -> Any:
         if not self.token:
             raise FinnhubAccessDenied("FINNHUB_TOKEN_NOT_CONFIGURED")
@@ -102,19 +108,19 @@ class FinnhubConnector:
         raise FinnhubError(str(last_error or "FINNHUB_REQUEST_FAILED"))
 
     def price_target(self, symbol: str) -> dict[str, Any]:
-        data = self._get("/stock/price-target", symbol=symbol)
+        data = self._get("/stock/price-target", symbol=self._provider_symbol(symbol))
         return data if isinstance(data, dict) else {}
 
     def recommendation_trends(self, symbol: str) -> list[dict[str, Any]]:
-        data = self._get("/stock/recommendation", symbol=symbol)
+        data = self._get("/stock/recommendation", symbol=self._provider_symbol(symbol))
         return data if isinstance(data, list) else []
 
     def basic_financials(self, symbol: str) -> dict[str, Any]:
-        data = self._get("/stock/metric", symbol=symbol, metric="all")
+        data = self._get("/stock/metric", symbol=self._provider_symbol(symbol), metric="all")
         return data if isinstance(data, dict) else {}
 
     def quote(self, symbol: str) -> dict[str, Any]:
-        data = self._get("/quote", symbol=symbol)
+        data = self._get("/quote", symbol=self._provider_symbol(symbol))
         return data if isinstance(data, dict) else {}
 
     def etf_profile(self, symbol: str) -> dict[str, Any]:
