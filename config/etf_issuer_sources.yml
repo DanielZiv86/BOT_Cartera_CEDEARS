@@ -10,9 +10,9 @@ sources:
   RSP:
     primary: {provider: Invesco, mode: html_table, url: "https://www.invesco.com/us/financial-products/etfs/product-detail?audienceType=Investor&ticker=RSP"}
   VEA:
-    primary: {provider: Vanguard, mode: html_table, url: "https://advisors.vanguard.com/investments/products/vea/vanguard-ftse-developed-markets-etf", max_age_days: 75}
+    primary: {provider: Vanguard, mode: vanguard_html, url: "https://advisors.vanguard.com/investments/products/vea/vanguard-ftse-developed-markets-etf", max_age_days: 75}
   VIG:
-    primary: {provider: Vanguard, mode: html_table, url: "https://advisors.vanguard.com/investments/products/vig/vanguard-dividend-appreciation-etf", max_age_days: 45}
+    primary: {provider: Vanguard, mode: vanguard_html, url: "https://advisors.vanguard.com/investments/products/vig/vanguard-dividend-appreciation-etf", max_age_days: 45}
   SMH:
     primary: {provider: VanEck, mode: html_table, url: "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/", max_age_days: 10}
   URA:
