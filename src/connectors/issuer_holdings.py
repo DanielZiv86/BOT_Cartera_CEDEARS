@@ -82,8 +82,6 @@ class IssuerHoldingsConnector:
         secondary = cfg.get("secondary")
         if isinstance(secondary, dict):
             inherited = dict(secondary)
-            # A fallback is a transport/provider substitute for the same fund.
-            # Preserve fund-specific cadence/analysis limits unless explicitly overridden.
             for key in ("max_age_days", "max_holdings_to_analyze"):
                 if inherited.get(key) is None and primary_meta.get(key) is not None:
                     inherited[key] = primary_meta[key]
@@ -108,6 +106,8 @@ class IssuerHoldingsConnector:
             holdings, as_of = self._fetch_ishares_csv(url, ticker)
         elif mode == "ishares_ucits_html":
             holdings, as_of = self._fetch_ishares_ucits_html(url)
+        elif mode == "vanguard_html":
+            holdings, as_of = self._fetch_vanguard_html(url)
         elif mode == "html_table":
             holdings, as_of = self._fetch_html_table(url)
         else:
@@ -129,9 +129,6 @@ class IssuerHoldingsConnector:
         )
 
     def _get(self, url: str) -> requests.Response:
-        # requests/urllib3 retries status/connect failures, but a prematurely-ended
-        # chunked body may surface while content is consumed. Consume inside the
-        # retry loop so UCITS issuer pages such as IWDA get a clean retry.
         last_exc: Exception | None = None
         for attempt in range(1, 4):
             try:
@@ -179,6 +176,26 @@ class IssuerHoldingsConnector:
                 candidates.append((score, normalized))
         if not candidates:
             raise IssuerHoldingsError("ISHARES_UCITS_HOLDINGS_TABLE_NOT_FOUND")
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1], self._extract_date(text)
+
+    def _fetch_vanguard_html(self, url: str) -> tuple[list[dict[str, Any]], str | None]:
+        """Select Vanguard's actual holdings table, not other portfolio percentage tables."""
+        response = self._get(url)
+        text = response.text
+        tables = pd.read_html(io.StringIO(text))
+        candidates: list[tuple[int, list[dict[str, Any]]]] = []
+        for table in tables:
+            columns = [str(c).strip().lower() for c in table.columns]
+            has_holdings = any(c in {"holding", "holdings"} for c in columns)
+            has_fund_weight = any("% of fund" in c or "% of funds" in c for c in columns)
+            if not (has_holdings and has_fund_weight):
+                continue
+            normalized = self._normalize_table(table)
+            if normalized:
+                candidates.append((len(normalized), normalized))
+        if not candidates:
+            raise IssuerHoldingsError("VANGUARD_HOLDINGS_TABLE_NOT_FOUND")
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1], self._extract_date(text)
 
@@ -233,7 +250,7 @@ class IssuerHoldingsConnector:
             r"(?:as of|holdings as of|daily holdings .*? as of)\s*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
             r"(?:as of|holdings as of|daily holdings \(%\) as of)\s*(\d{1,2}/\d{1,2}/\d{4})",
             r"(?:as of|holdings as of)\s*(\d{4}-\d{2}-\d{2})",
-            r"(?:as of|holdings as of)\s*(\d{1,2}/[A-Za-z]{3,9}/\d{4})",
+            r"(?:as of|holdings as of)\s*(\d{1,2}/[A-Za-z]{3,9]/\d{4})",
         ]
         dates: list[datetime] = []
         for pattern in patterns:
