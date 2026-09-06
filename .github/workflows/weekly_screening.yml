@@ -1,14 +1,29 @@
-name: Weekly Screening Placeholder
+name: Build Research MVP Screening
 
 on:
   workflow_dispatch:
-  schedule:
-    # Placeholder: Saturdays at 12:00 UTC ~= 09:00 Argentina (UTC-3)
-    - cron: '0 12 * * 6'
+  workflow_run:
+    workflows: ["Build Market Feature Engine"]
+    types: [completed]
+  push:
+    paths:
+      - "src/research/**"
+      - "src/orchestration/build_research_screening.py"
+      - "tests/test_research_screening.py"
+      - ".github/workflows/weekly_screening.yml"
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   weekly-screening:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -16,12 +31,67 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Placeholder only
+      - name: Run Research MVP unit tests
+        run: pytest -q tests/test_research_screening.py
+
+      - name: Download latest canonical universe
         run: |
-          echo "Weekly screening workflow scaffold is active."
-          echo "Screening calculations are intentionally not implemented yet."
+          RUN_ID=$(gh run list \
+            --workflow build_universe.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful canonical universe workflow run found"
+            exit 2
+          fi
+          echo "Using canonical universe workflow run: $RUN_ID"
+          mkdir -p data/upstream_universe
+          gh run download "$RUN_ID" \
+            --name canonical-universe \
+            --dir data/upstream_universe
+          test -f data/upstream_universe/cedear_universe_master.parquet
+
+      - name: Download latest market features
+        run: |
+          RUN_ID=$(gh run list \
+            --workflow market_features.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful market features workflow run found"
+            exit 2
+          fi
+          echo "Using market features workflow run: $RUN_ID"
+          mkdir -p data/upstream_features
+          gh run download "$RUN_ID" \
+            --name market-feature-engine \
+            --dir data/upstream_features
+          test -f data/upstream_features/market_features.parquet
+
+      - name: Build Research MVP screening
+        run: |
+          python -m src.orchestration.build_research_screening \
+            --universe data/upstream_universe/cedear_universe_master.parquet \
+            --features data/upstream_features/market_features.parquet \
+            --top-n 30 \
+            --output-dir data/canonical/research
+
+      - name: Upload Research MVP artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-mvp-screening
+          path: |
+            data/canonical/research/research_screening.json
+            data/canonical/research/research_screening.parquet
+            data/canonical/research/research_screening_metrics.json
+          if-no-files-found: error
+          retention-days: 90
