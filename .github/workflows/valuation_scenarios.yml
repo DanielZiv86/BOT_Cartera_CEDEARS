@@ -3,7 +3,7 @@ name: Build Canonical Valuation Scenarios
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: ["Build Research MVP Screening"]
+    workflows: ["Build Research MVP Screening", "Build CEDEAR Local Market Layer"]
     types: [completed]
 
 concurrency:
@@ -23,7 +23,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
       FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-      E2E_RUN_ID: ${{ github.event_name == 'workflow_run' && format('E2E-RESEARCH-{0}', github.event.workflow_run.id) || format('E2E-MANUAL-{0}', github.run_id) }}
+      E2E_RUN_ID: ${{ github.event_name == 'workflow_run' && format('E2E-UPSTREAM-{0}', github.event.workflow_run.id) || format('E2E-MANUAL-{0}', github.run_id) }}
 
     steps:
       - name: Checkout
@@ -39,7 +39,7 @@ jobs:
 
       - name: Resolve and download certified Research upstream
         run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.name }}" = "Build Research MVP Screening" ]; then
             RESEARCH_RUN_ID="${{ github.event.workflow_run.id }}"
             RESEARCH_COMMIT="${{ github.event.workflow_run.head_sha }}"
           else
@@ -113,6 +113,7 @@ jobs:
           lineage['valuation_run_id']=int('${{ github.run_id }}')
           lineage['price_run_id']=int('${{ env.PRICE_RUN_ID }}')
           lineage['valuation_count']=len(df)
+          lineage['triggering_workflow'] = '${{ github.event.workflow_run.name }}' if '${{ github.event_name }}' == 'workflow_run' else 'workflow_dispatch'
           Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(lineage,indent=2))
           PY
 
