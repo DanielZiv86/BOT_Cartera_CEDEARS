@@ -46,11 +46,14 @@ jobs:
           import json
           m=json.load(open('data/canonical/universe_manifest.json'))
           assert m['universe_gate_status']=='PASS', m
+          assert m['official_reconciliation_unresolved_count']==0, m
+          assert not m['mandate_exceptions_missing'], m
           assert m['canonical_eligible_count']==m['symbol_map_count'], m
           assert m['canonical_eligible_count']>0, m
           print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'])
           PY
       - name: Upload universe artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: canonical-universe
@@ -59,8 +62,8 @@ jobs:
             data/canonical/cedear_universe_master.parquet
             data/canonical/cedear_mandate_exclusions.json
             data/canonical/cedear_universe_inclusions.json
-            data/canonical/cedear_official_reconciliation_exclusions.json
+            data/canonical/cedear_official_reconciliation_unresolved.json
             data/canonical/security_symbol_map.json
             data/canonical/security_symbol_map.parquet
             data/canonical/universe_manifest.json
-          if-no-files-found: error
+          if-no-files-found: warn
