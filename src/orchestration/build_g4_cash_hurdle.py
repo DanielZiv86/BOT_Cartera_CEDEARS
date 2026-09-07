@@ -55,10 +55,10 @@ def _add_execution_gate(result: pd.DataFrame, local_market: pd.DataFrame) -> pd.
     cols=[c for c in ["cedear_ticker","execution_book_status","executable_buy_ars","ratio_status","ccl_status","market_session_status"] if c in local_market.columns]
     lm=local_market[cols].drop_duplicates("cedear_ticker")
     out=result.merge(lm,on="cedear_ticker",how="left",suffixes=("","_execution"))
-    book=out.get("execution_book_status",pd.Series(index=out.index,dtype=object)).eq("BOOK_EXECUTABLE_BY_SANITY")
+    book=out.get("execution_book_status",pd.Series(index=out.index,dtype=object)).isin(["BOOK_EXECUTABLE_BY_SANITY","EXECUTABLE_BOOK_READY"])
     buy=pd.to_numeric(out.get("executable_buy_ars"),errors="coerce").gt(0)
-    ratio=out.get("ratio_status",pd.Series(index=out.index,dtype=object)).eq("RATIO_VALIDATED_COMAFI")
-    ccl=out.get("ccl_status",pd.Series(index=out.index,dtype=object)).isin(["CCL_READY_VALIDATED","CCL_WARNING_MARKET_DEVIATION"])
+    ratio=out.get("ratio_status",pd.Series(index=out.index,dtype=object)).isin(["RATIO_VALIDATED_COMAFI","RATIO_VALIDATED_CANONICAL_CCL"])
+    ccl=out.get("ccl_status",pd.Series(index=out.index,dtype=object)).isin(["CCL_READY_VALIDATED","CCL_READY_VALIDATED_CANONICAL","CCL_WARNING_MARKET_DEVIATION"])
     out["analysis_ready"]=out["g4_status"].ne("BLOCKED_BY_DATA")
     out["execution_ready"]=out["analysis_ready"] & book & buy & ratio & ccl
     out["execution_gate_status"]="NOT_EXECUTION_READY"
