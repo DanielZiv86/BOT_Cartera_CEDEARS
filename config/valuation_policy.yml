@@ -1,4 +1,4 @@
-methodology_version: VAL-1.7
+methodology_version: VAL-1.8
 horizon_months: 12
 freshness:
   price_target_max_age_days: 45
@@ -16,14 +16,8 @@ quality:
 provider_fallbacks:
   finnhub_premium_etf_enabled: false
 instrument_overrides:
-  etf_like_tickers:
-    - GLD
-    - IBIT
-    - ETHA
-  non_equity_trackers:
-    - GLD
-    - IBIT
-    - ETHA
+  etf_like_tickers: [GLD, IBIT, ETHA]
+  non_equity_trackers: [GLD, IBIT, ETHA]
 probabilities:
   prior_bull: 0.25
   prior_base: 0.50
@@ -40,18 +34,35 @@ confidence:
 status_policy:
   stale_material_input: BLOCKED_BY_DATA
   missing_material_input: BLOCKED_BY_DATA
+
+# Broad diversified index ETFs may use a separately labelled aggregate-fundamentals
+# model when constituent analyst-target look-through cannot economically reach 50%.
+# Observed inputs are issuer facts; scenario growth/multiple assumptions are explicit,
+# versioned valuation-policy assumptions and never presented as issuer forecasts.
+index_etf_models:
+  VEA:
+    benchmark: FTSE Developed All Cap ex US Index
+    current_pe: 16.6
+    dividend_yield: 0.0239
+    observed_earnings_growth: 0.1278
+    base_earnings_growth: 0.075
+    bull_growth: 0.11
+    bear_growth: -0.04
+    bull_terminal_pe: 17.5
+    base_terminal_pe: 16.2
+    bear_terminal_pe: 13.5
+    confidence: 0.62
+    source_date: '2026-07-31'
+    source_ref: 'Vanguard Advisors VEA fundamentals: P/E 16.6x, dividend yield 2.39%, earnings growth 12.78%; benchmark FTSE Developed All Cap ex US Index'
+
 notes:
+  - VAL-1.8 adds an evidence-based aggregate-fundamentals engine for explicitly configured broad diversified index ETFs where 50% constituent analyst-target look-through is structurally uneconomic.
+  - VEA observed inputs are Vanguard issuer fundamentals as of 2026-07-31; Bull/Base/Bear growth and terminal-multiple assumptions are explicit versioned policy assumptions, not issuer forecasts.
+  - The 50% constituent look-through hurdle remains unchanged for the primary issuer-holdings method and for all ETFs not explicitly configured under index_etf_models.
   - Broad-universe equity valuation uses Finnhub price-target consensus only; recommendation trends and fundamentals are deferred to Deep Research after G4/ranking shortlist.
-  - Universe equity probabilities use the explicit policy prior so deferred enrichment cannot block or slow the 305-name coverage run.
   - Equity ETF scenarios use official issuer holdings and canonical equity scenarios first.
-  - ETF direct lookups are allocated by a deterministic marginal-coverage planner: funds closest to the 50% look-through hurdle with the fewest estimated uncached constituents are processed first instead of FIFO universe order.
-  - The preferred global direct-constituent budget is 40, while 60 is a hard cap that allows limited recovery when additional lookups can improve usable coverage without returning to the ~800-request regime.
-  - A maximum of 25 uncached constituents may be queried per ETF during Top-N deep valuation, still bounded by the 60-call global hard cap; successes and failures remain shared in the constituent cache across funds.
-  - ETF look-through stops deterministically once minimum covered weight and minimum valid-holding count are both satisfied.
-  - Finnhub Premium ETF endpoints are disabled for the current plan because real production calls returned 403; they can only be re-enabled explicitly by policy.
-  - Issuer-specific holdings freshness may override the 35-day default when the issuer publishes on a slower documented cadence; the same fund-specific threshold is inherited by configured fallback sources and the applied threshold is emitted in each ETF row.
-  - Issuer downloads retry transport/read failures, including prematurely ended chunked responses observed on the IWDA UCITS page.
-  - Secondary holdings sources are explicitly tagged and receive lower confidence; they never masquerade as issuer data.
-  - GLD, IBIT and ETHA use a dedicated issuer-NAV + explicit asset stress-scenario model.
-  - Non-equity stress assumptions are policy inputs, versioned separately and reviewed at least quarterly.
+  - ETF direct lookups are allocated by deterministic marginal-coverage efficiency and remain bounded by the global hard cap.
+  - Finnhub Premium ETF endpoints remain disabled because production calls returned 403.
+  - Secondary holdings sources remain explicitly tagged and receive lower confidence.
+  - GLD, IBIT and ETHA continue to use the dedicated issuer-NAV stress model.
   - Historical momentum is not used to fabricate valuation targets.
