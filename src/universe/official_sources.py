@@ -8,10 +8,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-# Current structured Comafi catalogue. This page contains Shares and ETFs in one
-# authoritative table and exposes the fields needed for official reconciliation.
 COMAFI_PROGRAM_CATALOG_URL = "https://www.comafi.com.ar/Programas-CEDEARs-2483.note.aspx"
-# Legacy detail page kept only as supplementary identity evidence.
 COMAFI_SHARES_DETAIL_URL = "https://www.comafi.com.ar/CEDEAR-SHARES-2254.note.aspx"
 COMAFI_PROGRAMS_URL = "https://www.comafi.com.ar/custodiaglobal/programas.aspx"
 BYMA_CEDEARS_URL = "https://www.byma.com.ar/productos/productos-financieros/cedears"
@@ -57,7 +54,6 @@ def _rename_catalog_columns(table: pd.DataFrame) -> pd.DataFrame:
     rename: dict[object, str] = {}
     for col in table.columns:
         key = _norm(col).lower()
-        # Current Comafi catalogue calls the local/BYMA identifier "Id de mercado".
         if (("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key:
             rename[col] = "cedear_byma_symbol"
         elif "denomin" in key or ("programa" in key and "cedear" in key):
@@ -80,10 +76,10 @@ def _parse_full_current_program_catalog(url: str) -> pd.DataFrame:
         if len(table) < 5:
             continue
         out = _ensure_identity_schema(_rename_catalog_columns(table.copy()))
-        valid = out["cedear_byma_symbol"].str.match(r"^[A-Z][A-Z0-9./-]{0,11}$", na=False)
-        if not valid.any():
-            continue
-        out = out[valid].copy()
+        # Current catalog membership is defined by the row itself; retain rows with a
+        # usable Caja code even when the local market identifier is blank or formatted oddly.
+        has_identity = out["caja_code"].ne("") | out["cedear_byma_symbol"].str.match(r"^[A-Z][A-Z0-9./-]{0,15}$", na=False)
+        out = out[has_identity].copy()
         if len(out) < 5:
             continue
         out.loc[out["program_name"].eq(""),"program_name"] = out["cedear_byma_symbol"]
@@ -93,7 +89,12 @@ def _parse_full_current_program_catalog(url: str) -> pd.DataFrame:
         candidates.append(out[["program_name","cedear_byma_symbol","underlying_symbol","caja_code","official_source_url","official_source_kind"]])
     if not candidates:
         raise RuntimeError(f"COMAFI_PARSE_ERROR: full current program catalogue not found at {url}")
-    return pd.concat(candidates,ignore_index=True).drop_duplicates("cedear_byma_symbol").reset_index(drop=True)
+    combined = pd.concat(candidates,ignore_index=True)
+    # The page exposes the same 305-row table twice. Deduplicate primarily by Caja code,
+    # falling back to local symbol for rows without Caja code.
+    combined["_dedupe_key"] = combined.apply(lambda r: f"CAJA:{r.caja_code}" if _norm(r.caja_code) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}", axis=1)
+    combined = combined[combined["_dedupe_key"].ne("SYM:")].drop_duplicates("_dedupe_key").drop(columns="_dedupe_key")
+    return combined.reset_index(drop=True)
 
 
 def _parse_detailed_identity_table(url: str) -> pd.DataFrame:
@@ -119,19 +120,24 @@ def fetch_comafi_programs() -> pd.DataFrame:
     catalog=_parse_full_current_program_catalog(COMAFI_PROGRAM_CATALOG_URL)
     try: detail=_parse_detailed_identity_table(COMAFI_SHARES_DETAIL_URL)
     except Exception: detail=pd.DataFrame(columns=catalog.columns)
-    by_symbol=catalog.set_index("cedear_byma_symbol",drop=False)
-    if not detail.empty:
-        for row in detail.itertuples(index=False):
-            symbol=row.cedear_byma_symbol
-            if symbol in by_symbol.index:
-                by_symbol.loc[symbol,"underlying_symbol"]=row.underlying_symbol
-                if _norm(row.caja_code): by_symbol.loc[symbol,"caja_code"]=_norm(row.caja_code)
-                by_symbol.loc[symbol,"official_source_kind"]="FULL_CATALOG_PLUS_DETAILED_IDENTITY"
-            else:
-                # Do not let a legacy detail page expand the current catalogue.
-                # Current membership must come from COMAFI_PROGRAM_CATALOG_URL.
-                continue
-    return _ensure_identity_schema(by_symbol.reset_index(drop=True))
+    catalog=_ensure_identity_schema(catalog)
+    detail=_ensure_identity_schema(detail)
+
+    # Enrich the current catalog by exact Caja code first. This is critical for programs
+    # whose current Id de mercado is missing/changed but whose Caja identity is stable.
+    detail_by_caja={r.caja_code:r for r in detail.itertuples(index=False) if _norm(r.caja_code)}
+    rows=[]
+    for row in catalog.itertuples(index=False):
+        rec={c:getattr(row,c) for c in catalog.columns}
+        d=detail_by_caja.get(_norm(rec.get("caja_code")))
+        if d is not None:
+            if _norm_symbol(getattr(d,"cedear_byma_symbol","")):
+                rec["cedear_byma_symbol"]=_norm_symbol(d.cedear_byma_symbol)
+            if _norm_symbol(getattr(d,"underlying_symbol","")):
+                rec["underlying_symbol"]=_norm_symbol(d.underlying_symbol)
+            rec["official_source_kind"]="FULL_CATALOG_PLUS_DETAILED_IDENTITY_BY_CAJA"
+        rows.append(rec)
+    return _ensure_identity_schema(pd.DataFrame(rows))
 
 
 def verify_byma_ceadars_product_page(url: str = BYMA_CEDEARS_URL) -> None:
@@ -141,15 +147,14 @@ def verify_byma_ceadars_product_page(url: str = BYMA_CEDEARS_URL) -> None:
 
 def fetch_official_universe_audit() -> OfficialUniverseAudit:
     verify_byma_ceadars_product_page(); comafi=fetch_comafi_programs()
-    # Preserve the strict gate: a materially incomplete official catalogue must
-    # stop the pipeline rather than silently certify a partial universe.
     if len(comafi)<300: raise RuntimeError(f"COMAFI_COVERAGE_ERROR: current catalogue unexpectedly small ({len(comafi)}); refusing to certify universe")
-    return OfficialUniverseAudit(comafi=comafi,byma_symbols=set(comafi["cedear_byma_symbol"].astype(str)),verified_at=datetime.now(timezone.utc).isoformat(),byma_evidence_mode="BYMA_MARKET_AUTHORITY_PLUS_COMAFI_FULL_CURRENT_CATALOG")
+    byma_symbols=set(s for s in comafi["cedear_byma_symbol"].astype(str) if _norm_symbol(s))
+    return OfficialUniverseAudit(comafi=comafi,byma_symbols=byma_symbols,verified_at=datetime.now(timezone.utc).isoformat(),byma_evidence_mode="BYMA_MARKET_AUTHORITY_PLUS_COMAFI_FULL_CURRENT_CATALOG")
 
 
 def reconcile_official_identity(source: pd.DataFrame, audit: OfficialUniverseAudit) -> pd.DataFrame:
-    out=source.copy(); comafi=_ensure_identity_schema(audit.comafi); by_local=set(comafi["cedear_byma_symbol"]); by_underlying={}; ambiguous_underlyings=set()
-    for underlying,group in comafi.groupby("underlying_symbol"):
+    out=source.copy(); comafi=_ensure_identity_schema(audit.comafi); by_local=set(s for s in comafi["cedear_byma_symbol"] if s); by_underlying={}; ambiguous_underlyings=set()
+    for underlying,group in comafi[comafi["underlying_symbol"].ne("")].groupby("underlying_symbol"):
         symbols=sorted(set(s for s in group["cedear_byma_symbol"].astype(str) if s))
         if len(symbols)==1: by_underlying[str(underlying)]=symbols[0]
         elif len(symbols)>1: ambiguous_underlyings.add(str(underlying))
