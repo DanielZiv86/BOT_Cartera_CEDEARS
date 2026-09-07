@@ -25,8 +25,6 @@ class FinnhubAccessDenied(FinnhubError):
 class FinnhubConnector:
     token: str | None = None
     timeout: int = 15
-    # Conservative sustained cadence. If Finnhub still returns 429, perform one
-    # short bounded backoff and fail fast instead of sleeping for minutes.
     min_interval_seconds: float = 1.05
     max_retries: int = 2
     default_rate_limit_sleep_seconds: float = 3.0
@@ -48,7 +46,6 @@ class FinnhubConnector:
 
     @staticmethod
     def _provider_symbol(symbol: str) -> str:
-        """Normalize canonical symbols only where Finnhub uses different notation."""
         ticker = str(symbol).strip().upper()
         return {"BRK/B": "BRK.B", "BRKB": "BRK.B"}.get(ticker, ticker)
 
@@ -59,11 +56,9 @@ class FinnhubConnector:
         if key in self._cache:
             self._cache_hit_count += 1
             return self._cache[key]
-
         elapsed = time.monotonic() - self._last_call
         if elapsed < self.min_interval_seconds:
             time.sleep(self.min_interval_seconds - elapsed)
-
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -71,7 +66,7 @@ class FinnhubConnector:
                     f"{self.base_url}{endpoint}",
                     params={**params, "token": self.token},
                     timeout=self.timeout,
-                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.4"},
+                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.5"},
                 )
                 self._request_count += 1
                 self._last_call = time.monotonic()
@@ -106,6 +101,17 @@ class FinnhubConnector:
                 if attempt < self.max_retries - 1:
                     time.sleep(min(2 ** attempt, 4))
         raise FinnhubError(str(last_error or "FINNHUB_REQUEST_FAILED"))
+
+    def symbol_search(self, query: str) -> list[dict[str, Any]]:
+        """Search Finnhub's canonical symbol catalogue.
+
+        Used by ETF look-through to resolve issuer tickers from non-US exchanges.
+        The caller must still validate a candidate by obtaining a usable quote and
+        fresh analyst target; search results alone are never accepted as evidence.
+        """
+        data = self._get("/search", q=str(query).strip())
+        rows = data.get("result") if isinstance(data, dict) else None
+        return [r for r in (rows or []) if isinstance(r, dict)]
 
     def price_target(self, symbol: str) -> dict[str, Any]:
         data = self._get("/stock/price-target", symbol=self._provider_symbol(symbol))
