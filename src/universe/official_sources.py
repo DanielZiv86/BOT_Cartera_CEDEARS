@@ -32,7 +32,8 @@ def fetch_comafi_programs(url: str = COMAFI_SHARES_URL) -> pd.DataFrame:
     for table in tables:
         names = {_norm(c).lower() for c in table.columns}
         if any("símbolo byma" in n or "simbolo byma" in n for n in names) and any("ticker" in n and "origen" in n for n in names):
-            wanted = table.copy(); break
+            wanted = table.copy()
+            break
     if wanted is None:
         raise RuntimeError("COMAFI_PARSE_ERROR: official table with BYMA symbol was not found")
     rename = {}
@@ -60,8 +61,6 @@ def fetch_byma_tradable_symbols(url: str = BYMA_CEDEARS_PDF_URL) -> set[str]:
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     if len(text) < 1000:
         raise RuntimeError("BYMA_PARSE_ERROR: official negotiable CEDEAR PDF yielded insufficient text")
-    # Membership is reconciled only against official Comafi symbols downstream; this broad
-    # token extraction deliberately does not invent instruments from arbitrary PDF tokens.
     return set(re.findall(r"(?<![A-Z0-9])[A-Z][A-Z0-9./-]{1,9}(?![A-Z0-9])", text.upper()))
 
 
@@ -82,17 +81,20 @@ def reconcile_official_identity(source: pd.DataFrame, audit: OfficialUniverseAud
     def resolve(row: pd.Series) -> str | None:
         local = _norm(row.get("cedear_ticker")).upper()
         underlying = _norm(row.get("underlying_ticker")).upper()
-        if local in by_local: return local
+        if local in by_local:
+            return local
         return by_underlying.get(underlying) or by_underlying.get(local)
 
     out["legacy_cedear_ticker"] = out["cedear_ticker"].astype(str).str.upper()
     out["cedear_byma_symbol"] = out.apply(resolve, axis=1)
     out["comafi_program_active"] = out["cedear_byma_symbol"].notna()
-    out["byma_tradable"] = out["cedear_byma_symbol"].map(lambda s: bool(s) and str(s).upper() in audit.byma_symbols)
+    out["byma_tradability_status"] = "BYMA_UNRESOLVED"
+    confirmed = out["cedear_byma_symbol"].map(lambda s: bool(s) and str(s).upper() in audit.byma_symbols)
+    out.loc[confirmed, "byma_tradability_status"] = "BYMA_CONFIRMED"
+    out["byma_tradable"] = out["byma_tradability_status"].eq("BYMA_CONFIRMED")
     out["official_identity_verified_at"] = audit.verified_at
-    out["official_identity_status"] = "OFFICIAL_RECONCILIATION_FAILED"
+    out["official_identity_status"] = "OFFICIAL_RECONCILIATION_UNRESOLVED"
     out.loc[out["comafi_program_active"] & out["byma_tradable"], "official_identity_status"] = "COMAFI_BYMA_VERIFIED"
-    # IWDA is a mandate exception to the underlying-market rule, not to local tradability.
     out["eligible_for_research"] = out["eligible"].eq(True) & out["comafi_program_active"] & out["byma_tradable"]
     out["eligibility_reason"] = out["official_identity_status"]
     return out
