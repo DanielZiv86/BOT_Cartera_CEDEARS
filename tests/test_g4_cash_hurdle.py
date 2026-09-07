@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.orchestration.build_g4_cash_hurdle import _apply_global_governance
+from src.orchestration.build_g4_cash_hurdle import _add_execution_gate, _apply_global_governance
 from src.valuation.g4 import G4Policy, calculate_g4_cash_hurdle
 from src.valuation.g4_review import apply_extreme_target_review
 
@@ -141,3 +141,34 @@ def test_extreme_target_pass_is_flagged_and_not_clean_actionable():
     assert "EXTREME_HIGH_LOW_TARGET_DISPERSION" in row["target_review_flags"]
     assert metrics["extreme_target_review_required_count"] == 1
     assert metrics["clean_g4_pass_count"] == 0
+
+
+def test_execution_gate_accepts_current_canonical_local_market_statuses():
+    economic = pd.DataFrame([{"cedear_ticker": "CIBR", "g4_status": "G4_FAIL_DOWNSIDE"}])
+    local = pd.DataFrame([{
+        "cedear_ticker": "CIBR",
+        "execution_book_status": "BOOK_EXECUTABLE_BY_SANITY",
+        "executable_buy_ars": 12345.0,
+        "ratio_status": "RATIO_VALIDATED_CANONICAL_CCL",
+        "ccl_status": "CCL_READY_VALIDATED_CANONICAL",
+        "market_session_status": "OPEN",
+    }])
+    out = _add_execution_gate(economic, local)
+    assert bool(out.iloc[0]["analysis_ready"])
+    assert bool(out.iloc[0]["execution_ready"])
+    assert out.iloc[0]["execution_gate_status"] == "EXECUTION_READY"
+
+
+def test_execution_gate_remains_fail_closed_without_executable_book():
+    economic = pd.DataFrame([{"cedear_ticker": "TEST", "g4_status": "G4_FAIL_RETURN"}])
+    local = pd.DataFrame([{
+        "cedear_ticker": "TEST",
+        "execution_book_status": "BOOK_NOT_EXECUTABLE",
+        "executable_buy_ars": 12345.0,
+        "ratio_status": "RATIO_VALIDATED_CANONICAL_CCL",
+        "ccl_status": "CCL_READY_VALIDATED_CANONICAL",
+        "market_session_status": "OPEN",
+    }])
+    out = _add_execution_gate(economic, local)
+    assert not bool(out.iloc[0]["execution_ready"])
+    assert out.iloc[0]["execution_gate_status"] == "NOT_EXECUTION_READY"
