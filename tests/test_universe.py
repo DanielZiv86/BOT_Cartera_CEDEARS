@@ -1,7 +1,7 @@
 import pandas as pd
 from src.universe.loader import eligible_universe_frame,validate_universe
 from src.universe.symbol_map import build_symbol_map
-from src.universe.official_sources import OfficialUniverseAudit,reconcile_official_identity
+from src.universe.official_sources import OfficialUniverseAudit,reconcile_official_identity,_rename_identity_columns,_ensure_identity_schema
 
 def _sample_payload():
     base={"issuer_name":"x","instrument_type":"Acción","ratio":4.0,"underlying_market":"NYSE","comafi_status":"PRIMARY_ACTIVE","caja_byma_status":"BASELINE_CROSS_VALIDATED","eligible":True,"exclusion_reason":"NONE_APPLICABLE","mandate_exception":False,"first_seen":"2026-09-04","last_verified":"2026-09-04","source_refs":["test"],"source_dates":["2026-09-04"],"universe_version":"test-v1","row_status":"HYDRATED_BASELINE_VALIDATED"}
@@ -39,3 +39,21 @@ def test_ambiguous_underlying_does_not_guess_local_symbol():
     comafi=pd.DataFrame([{"program_name":"A","cedear_byma_symbol":"BBV","underlying_symbol":"BBVA"},{"program_name":"B","cedear_byma_symbol":"BBVX","underlying_symbol":"BBVA"}])
     out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"BBV","BBVX"},verified_at="now")); row=out.iloc[0]
     assert pd.isna(row["cedear_byma_symbol"]); assert row["official_match_method"]=="AMBIGUOUS_UNDERLYING_SYMBOL"; assert not bool(row["eligible_for_research"])
+
+def test_caja_table_keeps_only_cedear_stable_identifiers():
+    table=pd.DataFrame({
+        "Símbolo BYMA":["SPY"],
+        "Código Caja de Valores Cedear":["8549"],
+        "ISIN Cedear":["ARCAVA460131"],
+        "Código Caja de Valores ETF/Acción":["7747"],
+        "ISIN ETF/Acción":["US78462F1030"],
+    })
+    renamed=_rename_identity_columns(table)
+    assert not renamed.columns.duplicated().any()
+    assert renamed.loc[0,"caja_code"]=="8549"
+    assert renamed.loc[0,"isin_cedear"]=="ARCAVA460131"
+    assert "Código Caja de Valores ETF/Acción" in renamed.columns
+    assert "ISIN ETF/Acción" in renamed.columns
+    normalized=_ensure_identity_schema(renamed)
+    assert normalized.loc[0,"caja_code"]=="8549"
+    assert normalized.loc[0,"isin_cedear"]=="ARCAVA460131"
