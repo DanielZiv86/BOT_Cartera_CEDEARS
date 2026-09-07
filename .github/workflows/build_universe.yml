@@ -11,7 +11,7 @@ on:
       - "config/mandate_exclusions.yml"
       - "config/universe_inclusions.yml"
       - "tests/test_universe.py"
-      - "pytest.ini"
+      - "requirements.txt"
       - ".github/workflows/build_universe.yml"
 
 jobs:
@@ -19,28 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run tests
         run: pytest -q tests/test_universe.py
-
       - name: Check canonical source exists
-        run: |
-          test -f data/input/CEDEAR_Universe_Master_v2.json || \
-            (echo "Missing data/input/CEDEAR_Universe_Master_v2.json" && exit 2)
-
-      - name: Build canonical universe and symbol map
+        run: test -f data/input/CEDEAR_Universe_Master_v2.json || (echo "Missing canonical source" && exit 2)
+      - name: Build and reconcile official universe
         run: |
           python -m src.orchestration.build_universe \
             --input data/input/CEDEAR_Universe_Master_v2.json \
@@ -48,7 +40,16 @@ jobs:
             --exclusions config/mandate_exclusions.yml \
             --inclusions config/universe_inclusions.yml \
             --output-dir data/canonical
-
+      - name: Enforce Universe Gate
+        run: |
+          python - <<'PY'
+          import json
+          m=json.load(open('data/canonical/universe_manifest.json'))
+          assert m['universe_gate_status']=='PASS', m
+          assert m['canonical_eligible_count']==m['symbol_map_count'], m
+          assert m['canonical_eligible_count']>0, m
+          print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'])
+          PY
       - name: Upload universe artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -58,6 +59,7 @@ jobs:
             data/canonical/cedear_universe_master.parquet
             data/canonical/cedear_mandate_exclusions.json
             data/canonical/cedear_universe_inclusions.json
+            data/canonical/cedear_official_reconciliation_exclusions.json
             data/canonical/security_symbol_map.json
             data/canonical/security_symbol_map.parquet
             data/canonical/universe_manifest.json
