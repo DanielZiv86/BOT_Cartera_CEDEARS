@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import html
 import io
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ class IssuerHoldingsConnector:
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://advisors.vanguard.com/",
     }
 
     def __init__(self, sources: dict[str, Any], timeout: int = 30):
@@ -128,19 +131,24 @@ class IssuerHoldingsConnector:
         raise IssuerHoldingsError("HTTP_RETRIEVAL_FAILED")
 
     def _fetch_vanguard(self, ticker: str, official_url: str) -> tuple[list[dict[str, Any]], str | None, str]:
-        """Prefer Vanguard JSON, then fail over to the official advisor HTML holdings table."""
+        """Prefer Vanguard JSON, then recover holdings from official advisor HTML/state."""
         try:
             return self._fetch_vanguard_json(ticker)
         except Exception as json_exc:  # noqa: BLE001
             print(f"VANGUARD_JSON_FALLBACK ticker={ticker.upper()} reason={type(json_exc).__name__}:{json_exc}")
         response = self._get(official_url, headers={**self.VANGUARD_BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml"})
         text = response.text
-        tables = pd.read_html(io.StringIO(text))
         best: list[dict[str, Any]] = []
+        try:
+            tables = pd.read_html(io.StringIO(text))
+        except ValueError:
+            tables = []
         for table in tables:
             normalized = self._normalize_table(table)
             if len(normalized) > len(best):
                 best = normalized
+        if not best:
+            best = self._extract_vanguard_embedded_holdings(text)
         as_of = self._extract_date(text)
         print(f"VANGUARD_HTML_DIAGNOSTIC ticker={ticker.upper()} holdings={len(best)} as_of={as_of}")
         if not best:
@@ -148,6 +156,52 @@ class IssuerHoldingsConnector:
         if as_of is None:
             raise IssuerHoldingsError("VANGUARD_HTML_AS_OF_MISSING")
         return best, as_of, official_url
+
+    @classmethod
+    def _extract_vanguard_embedded_holdings(cls, text: str) -> list[dict[str, Any]]:
+        """Recover holdings rendered client-side by Vanguard from embedded page state/text.
+
+        Vanguard advisor pages can contain the holdings payload without a literal HTML table.
+        This parser is deliberately schema-tolerant but conservative: it only accepts a
+        symbol paired with an explicit positive percentage and de-duplicates by symbol.
+        """
+        decoded = html.unescape(text).replace("\\u0025", "%")
+        decoded = re.sub(r"<[^>]+>", " ", decoded)
+        decoded = re.sub(r"\\[nrt]", " ", decoded)
+        decoded = re.sub(r"\s+", " ", decoded)
+        found: dict[str, float] = {}
+
+        # Human-readable advisor rendering: Company Name (TICKER) ... 3.12%
+        pattern = re.compile(r"\(([A-Za-z0-9.\-/]{1,20})\).{0,500}?([0-9]+(?:\.[0-9]+)?)\s*%", re.I)
+        for match in pattern.finditer(decoded):
+            symbol = match.group(1).strip().upper()
+            try:
+                weight = float(match.group(2))
+            except ValueError:
+                continue
+            if cls._valid_holding(symbol, weight):
+                found.setdefault(symbol, weight)
+
+        # Common embedded JSON/state shapes used by Vanguard applications.
+        json_patterns = [
+            re.compile(r'"(?:ticker|symbol)"\s*:\s*"([^"\\]+)".{0,500}?"(?:percentWeight|weight|percent|percentOfFund)"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)%?"?', re.I),
+            re.compile(r'"(?:percentWeight|weight|percent|percentOfFund)"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)%?"?.{0,500}?"(?:ticker|symbol)"\s*:\s*"([^"\\]+)"', re.I),
+        ]
+        for idx, jp in enumerate(json_patterns):
+            for match in jp.finditer(decoded):
+                symbol, raw_weight = (match.group(1), match.group(2)) if idx == 0 else (match.group(2), match.group(1))
+                symbol = symbol.strip().upper()
+                try:
+                    weight = float(raw_weight)
+                except ValueError:
+                    continue
+                if cls._valid_holding(symbol, weight):
+                    found.setdefault(symbol, weight)
+        return [{"symbol": symbol, "percent": weight} for symbol, weight in found.items()]
+
+    @staticmethod
+    def _valid_holding(symbol: str, weight: float) -> bool:
+        return bool(symbol and symbol not in {"NAN", "--", "-", "CASH", "USD"} and "CASH" not in symbol and 0 < weight <= 100)
 
     def _fetch_vanguard_json(self, ticker: str) -> tuple[list[dict[str, Any]], str | None, str]:
         url = f"https://investor.vanguard.com/investment-products/etfs/profile/api/{ticker.upper()}/portfolio-holding/stock?start=1&count=50000"
