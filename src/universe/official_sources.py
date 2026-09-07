@@ -58,9 +58,7 @@ def _rename_identity_columns(table: pd.DataFrame, issuer: str) -> pd.DataFrame:
                 rename[col]="caja_code"
             elif "isin cedear" in key:
                 rename[col]="isin_cedear"
-            # Explicitly ignore ETF/Acción identifiers: they belong to the underlying.
             continue
-
         is_underlying=("subyacente" in key or "underlying" in key)
         if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key):
             rename[col]="cedear_byma_symbol"
@@ -123,13 +121,36 @@ def verify_byma_ceadars_product_page(url: str=BYMA_CEDEARS_URL) -> None:
     response=_http_get(url); text=re.sub(r"\s+"," ",response.text).lower()
     if "cedear" not in text or not any(token in text for token in ("negoci","trading","conversion")): raise RuntimeError("BYMA_PRODUCT_PAGE_VALIDATION_ERROR: CEDEAR market evidence not found")
 
+def _coalesce_official_identity_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Merge duplicate stable identities across issuers/sources without losing richer fields.
+
+    Comafi may provide the authoritative Caja code/ISIN while Caja provides a populated
+    BYMA symbol for the same security. A plain drop_duplicates kept the first row and
+    discarded that enrichment, which made valid securities such as VIG unresolved.
+    """
+    frame=_ensure_identity_schema(frame)
+    frame=frame.copy()
+    frame["_key"]=frame.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
+    rows=[]
+    for _,group in frame[frame["_key"].ne("SYM:")].groupby("_key",sort=False):
+        rec={}
+        for col in ["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear"]:
+            values=[_norm(v) for v in group[col].tolist() if _norm(v)]
+            rec[col]=values[0] if values else ""
+        for col in ["official_issuer","official_source_url","official_source_kind"]:
+            values=[]
+            for value in group[col].tolist():
+                value=_norm(value)
+                if value and value not in values: values.append(value)
+            rec[col]=" | ".join(values)
+        rows.append(rec)
+    return _ensure_identity_schema(pd.DataFrame(rows))
+
 def fetch_official_universe_audit() -> OfficialUniverseAudit:
     verify_byma_ceadars_product_page(); comafi=fetch_comafi_programs(); caja=fetch_caja_programs()
     if len(comafi)<300: raise RuntimeError(f"COMAFI_COVERAGE_ERROR: current catalogue unexpectedly small ({len(comafi)})")
     if len(caja)<20: raise RuntimeError(f"CAJA_COVERAGE_ERROR: current catalogue unexpectedly small ({len(caja)})")
-    official=pd.concat([comafi,caja],ignore_index=True)
-    official["_key"]=official.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
-    official=official.drop_duplicates("_key").drop(columns="_key").reset_index(drop=True)
+    official=_coalesce_official_identity_rows(pd.concat([comafi,caja],ignore_index=True))
     symbols=set(_norm_symbol(s) for s in official["cedear_byma_symbol"] if _norm_symbol(s))
     return OfficialUniverseAudit(comafi=official,byma_symbols=symbols,verified_at=datetime.now(timezone.utc).isoformat(),byma_evidence_mode="BYMA_MARKET_AUTHORITY_PLUS_COMAFI_AND_CAJA_OFFICIAL_CATALOGS")
 
