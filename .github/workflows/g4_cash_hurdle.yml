@@ -43,10 +43,12 @@ jobs:
           python - <<'PY'
           import json, pandas as pd
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
+          v=pd.read_parquet('data/upstream_valuation/valuation_scenarios.parquet')
+          top={str(x).upper() for x in d.get('topn_tickers',[])}
           assert d.get('research_run_id'), d
-          assert d.get('top_n') == 30, d
-          assert d.get('valuation_count') == 30, d
-          assert len(pd.read_parquet('data/upstream_valuation/valuation_scenarios.parquet')) == 30
+          assert d.get('top_n') == 30 and len(top) == 30, d
+          assert d.get('valuation_count') == 30 and len(v) == 30, d
+          assert set(v['cedear_ticker'].astype(str).str.upper()) == top
           PY
 
       - name: Download latest CEDEAR local market layer
@@ -68,6 +70,24 @@ jobs:
           test -f data/upstream_portfolio/portfolio_fit_quantitative.parquet
           test -f data/upstream_portfolio/portfolio_positions.parquet
 
+      - name: Restrict G4 candidate layers to immutable Research Top-30
+        run: |
+          python - <<'PY'
+          import json, pandas as pd
+          from pathlib import Path
+          d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
+          top={str(x).upper() for x in d['topn_tickers']}
+          assert len(top)==30
+          for path in ['data/upstream_local/cedear_local_market.parquet','data/upstream_portfolio/portfolio_fit_quantitative.parquet']:
+              df=pd.read_parquet(path)
+              col='cedear_ticker' if 'cedear_ticker' in df.columns else 'ticker'
+              out=df[df[col].astype(str).str.upper().isin(top)].copy()
+              missing=top-set(out[col].astype(str).str.upper())
+              assert not missing, f'{path} missing Top-N tickers: {sorted(missing)}'
+              assert len(out)==30, (path,len(out))
+              out.to_parquet(path,index=False)
+          PY
+
       - name: Build G4 Cash Hurdle from same Research lineage
         run: |
           python -m src.orchestration.build_g4_cash_hurdle \
@@ -80,7 +100,10 @@ jobs:
           import json
           from pathlib import Path
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
-          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}')})
+          manifest=json.load(open('data/canonical/g4/g4_manifest.json'))
+          assert manifest.get('ticker_count') == 30, manifest
+          assert manifest.get('evaluated_count',0)+manifest.get('blocked_count',0) == 30, manifest
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30})
           Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
 
