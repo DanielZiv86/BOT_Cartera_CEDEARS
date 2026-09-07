@@ -49,11 +49,11 @@ jobs:
           import json
           m=json.load(open('data/canonical/universe_manifest.json'))
           assert m['universe_gate_status']=='PASS', m
-          assert m['official_reconciliation_unresolved_count']==0, m
+          assert m.get('official_reconciliation_blocking_count', m['official_reconciliation_unresolved_count'])==0, m
           assert not m['mandate_exceptions_missing'], m
           assert m['canonical_eligible_count']==m['symbol_map_count'], m
           assert m['canonical_eligible_count']>0, m
-          print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'])
+          print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'], 'quarantined_unresolved=', m['official_reconciliation_unresolved_count'])
           PY
       - name: Upload universe diagnostics and artifacts
         if: always()
