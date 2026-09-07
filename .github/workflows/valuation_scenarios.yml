@@ -75,15 +75,20 @@ jobs:
           import json, os, pandas as pd
           r=pd.read_parquet('data/upstream_research/research_screening.parquet')
           u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet')
-          assert len(r)==305 and r['rank'].notna().all()
-          top=r.sort_values('rank').head(30)
+          um=json.load(open('data/upstream_universe/universe_manifest.json'))
+          expected=int(um['canonical_eligible_count'])
+          assert expected > 0
+          assert len(u)==expected, (len(u), expected)
+          assert len(r)==expected and r['rank'].notna().all(), (len(r), expected)
+          top_n=min(30, expected)
+          top=r.sort_values('rank').head(top_n)
           tickers=set(top['cedear_ticker'].astype(str).str.upper())
           out=u[u['cedear_ticker'].astype(str).str.upper().isin(tickers)].copy()
-          assert len(out)==30
+          assert len(out)==top_n, (len(out), top_n)
           out.to_parquet('data/upstream_universe/research_topn_universe.parquet', index=False)
           universe_run_id=os.environ.get('UNIVERSE_RUN_ID')
           assert universe_run_id, 'UNIVERSE_RUN_ID missing in current step environment'
-          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(universe_run_id),'canonical_eligible_universe_count':305,'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
+          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(universe_run_id),'canonical_eligible_universe_count':expected,'top_n':top_n,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
           open('data/upstream_universe/e2e_lineage.json','w').write(json.dumps(manifest,indent=2))
           PY
 
@@ -122,8 +127,8 @@ jobs:
           import json, pandas as pd
           from pathlib import Path
           df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet')
-          assert len(df)==30
           lineage=json.loads(Path('data/upstream_universe/e2e_lineage.json').read_text())
+          assert len(df)==int(lineage['top_n']), (len(df), lineage['top_n'])
           lineage.update({
             'valuation_run_id':int('${{ github.run_id }}'),
             'price_run_id':int('${{ env.PRICE_RUN_ID }}'),
