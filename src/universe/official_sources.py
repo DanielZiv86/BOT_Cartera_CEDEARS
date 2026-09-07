@@ -33,6 +33,9 @@ def _http_get(url: str) -> requests.Response:
 
 def _ensure_identity_schema(frame: pd.DataFrame) -> pd.DataFrame:
     out=frame.copy()
+    if out.columns.duplicated().any():
+        duplicates=sorted(set(str(c) for c in out.columns[out.columns.duplicated(keep=False)]))
+        raise RuntimeError(f"OFFICIAL_SCHEMA_ERROR: duplicate normalized columns: {duplicates}")
     defaults={"program_name":"","cedear_byma_symbol":"","underlying_symbol":"","caja_code":"","isin_cedear":"","official_issuer":"","official_source_url":"","official_source_kind":""}
     for col,default in defaults.items():
         if col not in out.columns: out[col]=default
@@ -43,11 +46,12 @@ def _rename_identity_columns(table: pd.DataFrame) -> pd.DataFrame:
     rename={}
     for col in table.columns:
         key=_norm(col).lower()
+        is_underlying=("etf/acción" in key or "etf/accion" in key or "subyacente" in key or "underlying" in key)
         if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key): rename[col]="cedear_byma_symbol"
         elif "denomin" in key or ("programa" in key and "cedear" in key) or key=="cedear de etf": rename[col]="program_name"
         elif "ticker" in key and ("origen" in key or "mercado" in key): rename[col]="underlying_symbol"
-        elif ("código caja" in key or "codigo caja" in key) and ("cedear" in key or "valores" in key): rename[col]="caja_code"
-        elif "isin" in key and "cedear" in key: rename[col]="isin_cedear"
+        elif ("código caja" in key or "codigo caja" in key) and "cedear" in key and not is_underlying: rename[col]="caja_code"
+        elif "isin" in key and "cedear" in key and not is_underlying: rename[col]="isin_cedear"
     return table.rename(columns=rename)
 
 def _parse_identity_tables(url: str, issuer: str, kind: str, min_rows: int=5) -> pd.DataFrame:
@@ -104,7 +108,6 @@ def fetch_official_universe_audit() -> OfficialUniverseAudit:
     if len(comafi)<300: raise RuntimeError(f"COMAFI_COVERAGE_ERROR: current catalogue unexpectedly small ({len(comafi)})")
     if len(caja)<20: raise RuntimeError(f"CAJA_COVERAGE_ERROR: current catalogue unexpectedly small ({len(caja)})")
     official=pd.concat([comafi,caja],ignore_index=True)
-    # Same security can appear in more than one official source; stable identifiers win.
     official["_key"]=official.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
     official=official.drop_duplicates("_key").drop(columns="_key").reset_index(drop=True)
     symbols=set(_norm_symbol(s) for s in official["cedear_byma_symbol"] if _norm_symbol(s))
