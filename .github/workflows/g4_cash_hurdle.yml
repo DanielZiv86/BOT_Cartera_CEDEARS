@@ -3,19 +3,8 @@ name: Build Valuation G4 Cash Hurdle
 on:
   workflow_dispatch:
   workflow_run:
-    workflows:
-      - "Build Canonical Valuation Scenarios"
-      - "Build CEDEAR Local Market Layer"
-      - "Build Portfolio State Engine"
+    workflows: ["Build Canonical Valuation Scenarios"]
     types: [completed]
-  push:
-    paths:
-      - "src/valuation/g4.py"
-      - "src/valuation/g4_review.py"
-      - "src/orchestration/build_g4_cash_hurdle.py"
-      - "config/g4_policy.yml"
-      - "tests/test_g4_cash_hurdle.py"
-      - ".github/workflows/g4_cash_hurdle.yml"
 
 permissions:
   contents: read
@@ -30,24 +19,41 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
+      - run: pip install -r requirements.txt
       - name: Run G4 unit tests
         run: pytest -q tests/test_g4_cash_hurdle.py
+
+      - name: Download exact triggering valuation artifact
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            VAL_RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            VAL_RUN_ID=$(gh run list --workflow valuation_scenarios.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          test -n "$VAL_RUN_ID" && test "$VAL_RUN_ID" != "null"
+          echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV"
+          mkdir -p data/upstream_valuation
+          gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
+          test -f data/upstream_valuation/valuation_scenarios.parquet
+          test -f data/upstream_valuation/e2e_lineage.json
+          python - <<'PY'
+          import json, pandas as pd
+          d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
+          assert d.get('research_run_id'), d
+          assert d.get('top_n') == 30, d
+          assert d.get('valuation_count') == 30, d
+          assert len(pd.read_parquet('data/upstream_valuation/valuation_scenarios.parquet')) == 30
+          PY
 
       - name: Download latest CEDEAR local market layer
         run: |
           RUN_ID=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          echo "LOCAL_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_local
           gh run download "$RUN_ID" --name cedear-local-market-layer --dir data/upstream_local
           test -f data/upstream_local/cedear_local_market.parquet
@@ -56,29 +62,27 @@ jobs:
         run: |
           RUN_ID=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          echo "PORTFOLIO_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_portfolio
           gh run download "$RUN_ID" --name portfolio-state-engine --dir data/upstream_portfolio
           test -f data/upstream_portfolio/portfolio_fit_quantitative.parquet
           test -f data/upstream_portfolio/portfolio_positions.parquet
 
-      - name: Download latest canonical valuation scenarios
-        run: |
-          RUN_ID=$(gh run list --workflow valuation_scenarios.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN_ID" && test "$RUN_ID" != "null"
-          mkdir -p data/upstream_valuation
-          gh run download "$RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
-          test -f data/upstream_valuation/valuation_scenarios.parquet
-
-      - name: Build Valuation + G4 Cash Hurdle
+      - name: Build G4 Cash Hurdle from same Research lineage
         run: |
           python -m src.orchestration.build_g4_cash_hurdle \
             --local-market data/upstream_local/cedear_local_market.parquet \
             --valuation-inputs data/upstream_valuation/valuation_scenarios.parquet \
             --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet \
             --positions data/upstream_portfolio/portfolio_positions.parquet \
-            --policy config/g4_policy.yml \
-            --output-dir data/canonical/g4 \
-            --brokerage-rate 0.006
+            --policy config/g4_policy.yml --output-dir data/canonical/g4 --brokerage-rate 0.006
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}')})
+          Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
+          PY
 
       - name: Upload G4 artifacts
         uses: actions/upload-artifact@v4
@@ -90,5 +94,6 @@ jobs:
             data/canonical/g4/g4_ranked_evaluated.json
             data/canonical/g4/g4_ranked_actionable.json
             data/canonical/g4/g4_manifest.json
+            data/canonical/g4/e2e_lineage.json
           if-no-files-found: error
           retention-days: 90
