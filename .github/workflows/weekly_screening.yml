@@ -23,69 +23,36 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Research MVP unit tests
+      - run: pip install -r requirements.txt
+      - name: Research v1 unit tests
         run: pytest -q tests/test_research_screening.py
-
-      - name: Download latest canonical universe
+      - name: Download canonical universe
         run: |
-          RUN_ID=$(gh run list \
-            --workflow build_universe.yml \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful canonical universe workflow run found"
-            exit 2
-          fi
-          echo "Using canonical universe workflow run: $RUN_ID"
+          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
           mkdir -p data/upstream_universe
-          gh run download "$RUN_ID" \
-            --name canonical-universe \
-            --dir data/upstream_universe
+          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
           test -f data/upstream_universe/cedear_universe_master.parquet
-
-      - name: Download latest market features
+      - name: Download market features
         run: |
-          RUN_ID=$(gh run list \
-            --workflow market_features.yml \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful market features workflow run found"
-            exit 2
-          fi
-          echo "Using market features workflow run: $RUN_ID"
+          RUN_ID=$(gh run list --workflow market_features.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
           mkdir -p data/upstream_features
-          gh run download "$RUN_ID" \
-            --name market-feature-engine \
-            --dir data/upstream_features
+          gh run download "$RUN_ID" --name market-feature-engine --dir data/upstream_features
           test -f data/upstream_features/market_features.parquet
-
-      - name: Build Research MVP screening
+      - name: Build and certify Research MVP v1.0
         run: |
           python -m src.orchestration.build_research_screening \
             --universe data/upstream_universe/cedear_universe_master.parquet \
             --features data/upstream_features/market_features.parquet \
-            --top-n 30 \
+            --top-n 30 --expected-count 316 --min-top-data-quality 60 \
             --output-dir data/canonical/research
-
-      - name: Upload Research MVP artifacts
+      - name: Upload Research v1 audit artifacts
         uses: actions/upload-artifact@v4
         with:
           name: research-mvp-screening
@@ -93,5 +60,7 @@ jobs:
             data/canonical/research/research_screening.json
             data/canonical/research/research_screening.parquet
             data/canonical/research/research_screening_metrics.json
+            data/canonical/research/research_integrity.json
+            data/canonical/research/research_reconciliation.json
           if-no-files-found: error
           retention-days: 90
