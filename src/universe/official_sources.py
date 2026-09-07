@@ -24,7 +24,7 @@ class OfficialUniverseAudit:
     comafi: pd.DataFrame
     byma_symbols: set[str]
     verified_at: str
-    byma_evidence_mode: str
+    byma_evidence_mode: str = "TEST_OR_LEGACY_STRUCTURED_EVIDENCE"
 
 
 def _norm(value: object) -> str:
@@ -79,13 +79,6 @@ def _parse_detailed_identity_table(url: str) -> pd.DataFrame:
 
 
 def _parse_current_program_catalog(url: str) -> pd.DataFrame:
-    """Parse the current public Comafi catalogue.
-
-    The catalogue is deliberately accepted with a smaller schema than the legacy
-    detail table: local market symbol + program name + Caja code are enough to prove
-    that a local program exists.  Origin ticker is filled from the local symbol when
-    the catalogue does not expose it; detailed tables override it later.
-    """
     response = _http_get(url)
     tables = pd.read_html(io.StringIO(response.text))
     candidates: list[pd.DataFrame] = []
@@ -104,8 +97,6 @@ def _parse_current_program_catalog(url: str) -> pd.DataFrame:
                 rename[col] = "caja_code"
         out = table.rename(columns=rename)
         if "cedear_byma_symbol" not in out.columns:
-            # Some Comafi pages render the first column simply as an unnamed/index-like
-            # field.  Use it only when its values overwhelmingly look like market IDs.
             first = out.columns[0]
             vals = out[first].map(_norm_symbol)
             ratio = vals.str.match(r"^[A-Z][A-Z0-9./-]{0,9}$", na=False).mean()
@@ -131,8 +122,6 @@ def _parse_current_program_catalog(url: str) -> pd.DataFrame:
 def fetch_comafi_programs() -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
-    # Current catalogue first: this is the broad inventory and fixes the former 256-row
-    # ceiling that incorrectly left current Shares/ETFs such as AAL/SPY/VEA unresolved.
     for parser, url in (
         (_parse_current_program_catalog, COMAFI_PROGRAM_CATALOG_URL),
         (_parse_detailed_identity_table, COMAFI_SHARES_DETAIL_URL),
@@ -147,8 +136,6 @@ def fetch_comafi_programs() -> pd.DataFrame:
     raw = pd.concat(frames, ignore_index=True, sort=False)
     raw["cedear_byma_symbol"] = raw["cedear_byma_symbol"].map(_norm_symbol)
     raw["underlying_symbol"] = raw["underlying_symbol"].map(_norm_symbol)
-    # Prefer detailed identity rows where available, because they carry the true origin
-    # ticker (e.g. BA.C -> BAC).  Catalogue-only rows still prove local program identity.
     priority = {"DETAILED_IDENTITY_TABLE": 0, "CURRENT_PROGRAM_CATALOG": 1}
     raw["_priority"] = raw["official_source_kind"].map(priority).fillna(9)
     raw = raw.sort_values(["cedear_byma_symbol", "_priority"])
@@ -187,7 +174,6 @@ def reconcile_official_identity(source: pd.DataFrame, audit: OfficialUniverseAud
         else:
             ambiguous_underlyings.add(str(underlying))
 
-    # Caja code is a strong stable identifier and should beat ticker heuristics.
     by_caja: dict[str, str] = {}
     if "caja_code" in comafi.columns:
         for code, group in comafi.dropna(subset=["caja_code"]).groupby("caja_code"):
