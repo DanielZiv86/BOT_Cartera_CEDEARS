@@ -17,7 +17,7 @@ def test_official_reconciliation_resolves_local_symbol_distinct_from_underlying(
     source=eligible_universe_frame(_sample_payload()).iloc[[0]].copy()
     comafi=pd.DataFrame([{"program_name":"Banco Bilbao","cedear_byma_symbol":"BBV","underlying_symbol":"BBVA"}])
     out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"BBV"},verified_at="now"))
-    row=out.iloc[0]; assert row["cedear_byma_symbol"]=="BBV"; assert bool(row["byma_tradable"]); assert bool(row["eligible_for_research"])
+    row=out.iloc[0]; assert row["cedear_byma_symbol"]=="BBV"; assert row["official_match_method"]=="MATCH_BY_UNDERLYING_SYMBOL"; assert bool(row["byma_tradable"]); assert bool(row["eligible_for_research"])
 
 def test_symbol_map_routes_local_providers_to_byma_symbol():
     frame=pd.DataFrame([{"cedear_ticker":"BBV","legacy_cedear_ticker":"BBVA","cedear_byma_symbol":"BBV","underlying_ticker":"BBVA","underlying_market":"NYSE","instrument_type":"Acción","ratio":4.0,"mandate_exception":False,"byma_tradable":True}])
@@ -25,6 +25,17 @@ def test_symbol_map_routes_local_providers_to_byma_symbol():
     result=build_symbol_map(frame,aliases,providers=("yahoo","stooq","iol","data912")); row=result.iloc[0]
     assert row["cedear_ticker"]=="BBV" and row["canonical_underlying"]=="BBVA"; assert row["iol_symbol"]=="BBV" and row["data912_symbol"]=="BBV"; assert row["yahoo_symbol"]=="BBVA" and row["stooq_symbol"]=="BBVA.US"
 
-def test_reconciliation_fails_closed_when_not_in_byma():
-    source=eligible_universe_frame(_sample_payload()).iloc[[0]].copy(); comafi=pd.DataFrame([{"program_name":"Banco Bilbao","cedear_byma_symbol":"BBV","underlying_symbol":"BBVA"}])
-    out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols=set(),verified_at="now")); assert not bool(out.iloc[0]["eligible_for_research"])
+def test_reconciliation_fails_closed_when_not_in_structured_official_list():
+    source=eligible_universe_frame(_sample_payload()).iloc[[0]].copy(); comafi=pd.DataFrame([{"program_name":"Other","cedear_byma_symbol":"XYZ","underlying_symbol":"XYZ"}])
+    out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"XYZ"},verified_at="now")); assert not bool(out.iloc[0]["eligible_for_research"]); assert out.iloc[0]["byma_tradability_status"]=="BYMA_UNRESOLVED"
+
+def test_mandate_exception_is_preserved_without_false_byma_confirmation():
+    source=eligible_universe_frame(_sample_payload()).iloc[[1]].copy(); comafi=pd.DataFrame([{"program_name":"Other","cedear_byma_symbol":"XYZ","underlying_symbol":"XYZ"}])
+    out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"XYZ"},verified_at="now")); row=out.iloc[0]
+    assert row["cedear_ticker"]=="IWDA"; assert not bool(row["byma_tradable"]); assert row["official_identity_status"]=="MANDATE_EXCEPTION_NOT_BYMA_CONFIRMED"; assert bool(row["eligible_for_research"])
+
+def test_ambiguous_underlying_does_not_guess_local_symbol():
+    source=eligible_universe_frame(_sample_payload()).iloc[[0]].copy()
+    comafi=pd.DataFrame([{"program_name":"A","cedear_byma_symbol":"BBV","underlying_symbol":"BBVA"},{"program_name":"B","cedear_byma_symbol":"BBVX","underlying_symbol":"BBVA"}])
+    out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"BBV","BBVX"},verified_at="now")); row=out.iloc[0]
+    assert pd.isna(row["cedear_byma_symbol"]); assert row["official_match_method"]=="AMBIGUOUS_UNDERLYING_SYMBOL"; assert not bool(row["eligible_for_research"])
