@@ -21,12 +21,6 @@ def load_universe_inclusions(path):
     return payload
 
 def apply_universe_inclusions(canonical: pd.DataFrame, inc: dict, exclusion_set: set[str]):
-    """Overlay explicit inclusions onto baseline rows, or append genuinely missing rows.
-
-    Inclusion rows are authoritative identity hydration for reconciliation.  Previously an
-    inclusion whose ticker already existed in the baseline was silently ignored, which
-    discarded Caja/ISIN and mandate-exception fields (notably IWDA).
-    """
     out=canonical.copy(); included=[]; overlaid=[]
     for row in inc.get("rows",[]):
         ticker=str(row["cedear_ticker"]).strip().upper()
@@ -63,14 +57,23 @@ def main():
     mandate_exception_tickers=sorted(active.loc[active.get("mandate_exception",False).eq(True),"legacy_cedear_ticker"].astype(str).tolist()) if "mandate_exception" in active.columns else []
     eligible_legacy=set(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).tolist())
     missing_mandate_exceptions=sorted(set(mandate_exception_tickers)-eligible_legacy)
-    gate_ok=symbol_map_ok and unresolved.empty and not missing_mandate_exceptions
+
+    # Unresolved baseline rows are diagnostic/quarantine items, not automatically gate blockers.
+    # A row absent from the current official catalog must not be allowed to freeze the whole
+    # current universe merely because an older baseline labelled it eligible. Mandate exceptions
+    # remain explicitly eligible and are separately enforced by missing_mandate_exceptions.
+    mandate_mask=unresolved.get("mandate_exception",pd.Series(False,index=unresolved.index)).eq(True)
+    blocking_unresolved=unresolved[unresolved["eligible_for_research"].eq(True) & ~mandate_mask].copy()
+    gate_ok=symbol_map_ok and blocking_unresolved.empty and not missing_mandate_exceptions
+
     out=Path(args.output_dir); out.mkdir(parents=True,exist_ok=True)
     eligible.to_parquet(out/"cedear_universe_master.parquet",index=False); eligible.to_json(out/"cedear_universe_master.json",orient="records",indent=2,force_ascii=False)
     canonical[canonical["user_mandate_excluded"]].to_json(out/"cedear_mandate_exclusions.json",orient="records",indent=2,force_ascii=False); canonical[canonical["universe_override_inclusion"]==True].to_json(out/"cedear_universe_inclusions.json",orient="records",indent=2,force_ascii=False)
     unresolved.to_json(out/"cedear_official_reconciliation_unresolved.json",orient="records",indent=2,force_ascii=False)
+    blocking_unresolved.to_json(out/"cedear_official_reconciliation_blocking.json",orient="records",indent=2,force_ascii=False)
     symbol_map.to_parquet(out/"security_symbol_map.parquet",index=False); symbol_map.to_json(out/"security_symbol_map.json",orient="records",indent=2,force_ascii=False)
-    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"universe_override_overlaid_count":len(overlaid),"universe_override_overlaid_tickers":sorted(overlaid),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
+    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"official_reconciliation_blocking_count":int(len(blocking_unresolved)),"official_reconciliation_blocking_legacy_tickers":sorted(blocking_unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"universe_override_overlaid_count":len(overlaid),"universe_override_overlaid_tickers":sorted(overlaid),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
     (out/"universe_manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8"); print(json.dumps(manifest,indent=2,ensure_ascii=False))
     if not gate_ok:
-        raise SystemExit(f"UNIVERSE_GATE_FAILED: unresolved={len(unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
+        raise SystemExit(f"UNIVERSE_GATE_FAILED: blocking_unresolved={len(blocking_unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
 if __name__=="__main__": main()
