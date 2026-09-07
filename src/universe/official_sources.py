@@ -39,7 +39,10 @@ def _ensure_identity_schema(frame: pd.DataFrame) -> pd.DataFrame:
     defaults={"program_name":"","cedear_byma_symbol":"","underlying_symbol":"","caja_code":"","isin_cedear":"","official_issuer":"","official_source_url":"","official_source_kind":""}
     for col,default in defaults.items():
         if col not in out.columns: out[col]=default
-    out["cedear_byma_symbol"]=out["cedear_byma_symbol"].map(_norm_symbol); out["underlying_symbol"]=out["underlying_symbol"].map(_norm_symbol); out["caja_code"]=out["caja_code"].map(_norm); out["isin_cedear"]=out["isin_cedear"].map(lambda x:_norm(x).upper())
+    out["cedear_byma_symbol"]=out["cedear_byma_symbol"].map(_norm_symbol)
+    out["underlying_symbol"]=out["underlying_symbol"].map(_norm_symbol)
+    out["caja_code"]=out["caja_code"].map(_norm)
+    out["isin_cedear"]=out["isin_cedear"].map(lambda x:_norm(x).upper())
     return out
 
 def _rename_identity_columns(table: pd.DataFrame) -> pd.DataFrame:
@@ -47,11 +50,22 @@ def _rename_identity_columns(table: pd.DataFrame) -> pd.DataFrame:
     for col in table.columns:
         key=_norm(col).lower()
         is_underlying=("etf/acción" in key or "etf/accion" in key or "subyacente" in key or "underlying" in key)
-        if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key): rename[col]="cedear_byma_symbol"
-        elif "denomin" in key or ("programa" in key and "cedear" in key) or key=="cedear de etf": rename[col]="program_name"
-        elif "ticker" in key and ("origen" in key or "mercado" in key): rename[col]="underlying_symbol"
-        elif ("código caja" in key or "codigo caja" in key) and not is_underlying: rename[col]="caja_code"
-        elif "isin" in key and "cedear" in key and not is_underlying: rename[col]="isin_cedear"
+        if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key):
+            rename[col]="cedear_byma_symbol"
+        elif "denomin" in key or ("programa" in key and "cedear" in key) or key=="cedear de etf":
+            rename[col]="program_name"
+        elif "ticker" in key and ("origen" in key or "mercado" in key):
+            rename[col]="underlying_symbol"
+        elif ("código caja" in key or "codigo caja" in key):
+            if "cedear" in key:
+                rename[col]="caja_code"
+            elif not is_underlying and "etf/" not in key and "etf /" not in key and "acción" not in key and "accion" not in key:
+                rename[col]="caja_code"
+        elif "isin" in key:
+            if "cedear" in key:
+                rename[col]="isin_cedear"
+            elif not is_underlying:
+                rename[col]="isin_cedear"
     return table.rename(columns=rename)
 
 def _parse_identity_tables(url: str, issuer: str, kind: str, min_rows: int=5) -> pd.DataFrame:
