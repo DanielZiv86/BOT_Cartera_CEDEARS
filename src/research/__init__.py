@@ -1,4 +1,4 @@
-"""Minimal Research MVP: homogeneous screening, ranking and Top-N selection."""
+"""Research MVP v1.0: universal screening, data quality, integrity and ranking."""
 
 from src.research.ranking import build_ranking
 from src.research.screening import build_screening_scores
