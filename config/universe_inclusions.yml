@@ -1,6 +1,6 @@
-version: INC-20260907-002
+version: INC-20260907-003
 effective_date: "2026-09-07"
-reason_code: REQUIRED_CURRENT_PROGRAM_MISSING_FROM_BASELINE
+reason_code: REQUIRED_CURRENT_PROGRAM_MISSING_OR_INCOMPLETE_IN_BASELINE
 rows:
   - cedear_ticker: VIG
     underlying_ticker: VIG
@@ -24,5 +24,32 @@ rows:
     source_dates:
       - "2026-09-07"
       - "2026-01-05"
-    universe_version: v2+INC-20260907-002
+    universe_version: v2+INC-20260907-003
     row_status: VALIDATED_OVERRIDE
+
+  - cedear_ticker: IWDA
+    underlying_ticker: IWDA LN
+    issuer_name: ISHARES CORE MSCI WORLD UCITS ETF
+    instrument_type: ETF Share
+    ratio: 24
+    underlying_market: EUROCLEAR
+    local_issuer: Comafi
+    comafi_status: VALIDATED_CURRENT_PROGRAM
+    caja_byma_status: VALIDATED_OFFICIAL_IDENTITY
+    eligible: true
+    exclusion_reason: null
+    mandate_exception: true
+    mandate_exception_reason: INCLUDED_BY_USER_DECISION
+    isin: AR0352918277
+    caja_code: "8704"
+    underlying_isin: IE00B4L5Y983
+    first_seen: "2026-09-07"
+    last_verified: "2026-09-07"
+    source_refs:
+      - https://www.comafi.com.ar/custodiaglobal/585-IWDA-LN.product.aspx
+      - https://www.comafi.com.ar/custodiaglobal/Multimedios/pdfs/16468.pdf?v=3
+    source_dates:
+      - "2026-09-07"
+      - "2025-01-01"
+    universe_version: v2+INC-20260907-003
+    row_status: VALIDATED_MANDATE_EXCEPTION_OVERRIDE
