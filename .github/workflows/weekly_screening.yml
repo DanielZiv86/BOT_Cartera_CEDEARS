@@ -38,6 +38,7 @@ jobs:
           mkdir -p data/upstream_universe
           gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
           test -f data/upstream_universe/cedear_universe_master.parquet
+          test -f data/upstream_universe/universe_manifest.json
       - name: Download market features
         run: |
           RUN_ID=$(gh run list --workflow market_features.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -47,10 +48,12 @@ jobs:
           test -f data/upstream_features/market_features.parquet
       - name: Build and certify Research MVP v1.0
         run: |
+          EXPECTED=$(python -c "import json; print(json.load(open('data/upstream_universe/universe_manifest.json'))['canonical_eligible_count'])")
+          echo "Canonical mandate universe expected: $EXPECTED"
           python -m src.orchestration.build_research_screening \
             --universe data/upstream_universe/cedear_universe_master.parquet \
             --features data/upstream_features/market_features.parquet \
-            --top-n 30 --expected-count 316 --min-top-data-quality 60 \
+            --top-n 30 --expected-count "$EXPECTED" --min-top-data-quality 60 \
             --output-dir data/canonical/research
       - name: Upload Research v1 audit artifacts
         uses: actions/upload-artifact@v4
