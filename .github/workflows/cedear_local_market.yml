@@ -8,13 +8,17 @@ on:
   schedule:
     - cron: "30 19 * * 1-5"
   push:
+    branches: [main]
     paths:
       - "src/connectors/iol.py"
       - "src/connectors/data912.py"
       - "src/connectors/comafi.py"
       - "src/market_data/cedear_local.py"
+      - "src/market_data/local_market_recovery.py"
+      - "src/market_data/local_market_diagnostics.py"
       - "src/orchestration/build_cedear_local_market.py"
       - "tests/test_cedear_local_market.py"
+      - "tests/test_local_market_recovery.py"
       - ".github/workflows/cedear_local_market.yml"
 
 permissions:
@@ -44,7 +48,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run unit tests
-        run: pytest -q tests/test_cedear_local_market.py
+        run: pytest -q tests/test_cedear_local_market.py tests/test_local_market_recovery.py
 
       - name: Download latest canonical universe
         run: |
@@ -82,5 +86,6 @@ jobs:
             data/canonical/local_market/comafi_ratio_audit.json
             data/canonical/local_market/comafi_ratio_audit.parquet
             data/canonical/local_market/cedear_local_market_metrics.json
+            data/canonical/local_market/local_market_blockers.json
           if-no-files-found: error
           retention-days: 90
