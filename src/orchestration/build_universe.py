@@ -20,6 +20,28 @@ def load_universe_inclusions(path):
         if errors: raise ValueError("Invalid universe inclusion row: "+"; ".join(errors))
     return payload
 
+def apply_universe_inclusions(canonical: pd.DataFrame, inc: dict, exclusion_set: set[str]):
+    """Overlay explicit inclusions onto baseline rows, or append genuinely missing rows.
+
+    Inclusion rows are authoritative identity hydration for reconciliation.  Previously an
+    inclusion whose ticker already existed in the baseline was silently ignored, which
+    discarded Caja/ISIN and mandate-exception fields (notably IWDA).
+    """
+    out=canonical.copy(); included=[]; overlaid=[]
+    for row in inc.get("rows",[]):
+        ticker=str(row["cedear_ticker"]).strip().upper()
+        if ticker in exclusion_set: raise SystemExit(f"Ticker {ticker} cannot be both excluded and force-included")
+        mask=out["cedear_ticker"].astype(str).str.strip().str.upper().eq(ticker)
+        overlay=dict(row,user_mandate_excluded=False,user_mandate_exclusion_reason=None,universe_override_inclusion=True,universe_override_reason=inc.get("reason_code","EXPLICIT_UNIVERSE_INCLUSION"))
+        if mask.any():
+            if int(mask.sum()) != 1: raise SystemExit(f"Ticker {ticker} appears more than once in baseline")
+            idx=out.index[mask][0]
+            for key,value in overlay.items(): out.at[idx,key]=value
+            overlaid.append(ticker)
+        else:
+            out=pd.concat([out,pd.DataFrame([overlay])],ignore_index=True); included.append(ticker)
+    return out,included,overlaid
+
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--input",required=True); p.add_argument("--aliases",default="config/symbol_aliases.yml"); p.add_argument("--exclusions",default="config/mandate_exclusions.yml"); p.add_argument("--inclusions",default="config/universe_inclusions.yml"); p.add_argument("--output-dir",default="data/canonical"); args=p.parse_args()
     payload=load_universe_json(args.input); validation=validate_universe(payload)
@@ -28,30 +50,26 @@ def main():
     source_tickers=set(source["cedear_ticker"].astype(str).str.upper()); unknown=sorted(exclusion_set-source_tickers)
     if unknown: raise SystemExit("Mandate exclusions contain unknown tickers: "+", ".join(unknown))
     canonical=source.copy(); canonical["user_mandate_excluded"]=canonical["cedear_ticker"].astype(str).str.upper().isin(exclusion_set); canonical["user_mandate_exclusion_reason"]=canonical["user_mandate_excluded"].map(lambda v:exc.get("reason_code","USER_EXCLUDED_FROM_ANALYSIS") if v else None); canonical["universe_override_inclusion"]=False; canonical["universe_override_reason"]=None
-    included=[]
-    for row in inc.get("rows",[]):
-        ticker=str(row["cedear_ticker"]).upper()
-        if ticker in exclusion_set: raise SystemExit(f"Ticker {ticker} cannot be both excluded and force-included")
-        if ticker in set(canonical["cedear_ticker"].astype(str).str.upper()): continue
-        record=dict(row,user_mandate_excluded=False,user_mandate_exclusion_reason=None,universe_override_inclusion=True,universe_override_reason=inc.get("reason_code","EXPLICIT_UNIVERSE_INCLUSION")); canonical=pd.concat([canonical,pd.DataFrame([record])],ignore_index=True); included.append(ticker)
+    canonical,included,overlaid=apply_universe_inclusions(canonical,inc,exclusion_set)
 
     audit=fetch_official_universe_audit(); canonical=reconcile_official_identity(canonical,audit)
     active=canonical[~canonical["user_mandate_excluded"]].copy()
     unresolved=active[active["byma_tradability_status"].eq("BYMA_UNRESOLVED")].copy()
     eligible=active[active["eligible_for_research"]].copy()
-    eligible["cedear_ticker"]=eligible["cedear_byma_symbol"].astype(str).str.upper()
+    eligible["cedear_ticker"]=eligible["cedear_byma_symbol"].fillna(eligible["legacy_cedear_ticker"]).astype(str).str.upper()
     if eligible["cedear_ticker"].duplicated().any(): raise SystemExit("Official reconciliation produced duplicate BYMA symbols")
     eligible=eligible.sort_values("cedear_ticker").reset_index(drop=True); symbol_map=build_symbol_map(eligible,load_alias_config(args.aliases))
     symbol_map_ok=len(symbol_map)==len(eligible) and not symbol_map["cedear_byma_symbol"].isna().any()
     mandate_exception_tickers=sorted(active.loc[active.get("mandate_exception",False).eq(True),"legacy_cedear_ticker"].astype(str).tolist()) if "mandate_exception" in active.columns else []
-    missing_mandate_exceptions=sorted(set(mandate_exception_tickers)-set(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).tolist()))
+    eligible_legacy=set(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).tolist())
+    missing_mandate_exceptions=sorted(set(mandate_exception_tickers)-eligible_legacy)
     gate_ok=symbol_map_ok and unresolved.empty and not missing_mandate_exceptions
     out=Path(args.output_dir); out.mkdir(parents=True,exist_ok=True)
     eligible.to_parquet(out/"cedear_universe_master.parquet",index=False); eligible.to_json(out/"cedear_universe_master.json",orient="records",indent=2,force_ascii=False)
     canonical[canonical["user_mandate_excluded"]].to_json(out/"cedear_mandate_exclusions.json",orient="records",indent=2,force_ascii=False); canonical[canonical["universe_override_inclusion"]==True].to_json(out/"cedear_universe_inclusions.json",orient="records",indent=2,force_ascii=False)
     unresolved.to_json(out/"cedear_official_reconciliation_unresolved.json",orient="records",indent=2,force_ascii=False)
     symbol_map.to_parquet(out/"security_symbol_map.parquet",index=False); symbol_map.to_json(out/"security_symbol_map.json",orient="records",indent=2,force_ascii=False)
-    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
+    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"universe_override_overlaid_count":len(overlaid),"universe_override_overlaid_tickers":sorted(overlaid),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
     (out/"universe_manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8"); print(json.dumps(manifest,indent=2,ensure_ascii=False))
     if not gate_ok:
         raise SystemExit(f"UNIVERSE_GATE_FAILED: unresolved={len(unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
