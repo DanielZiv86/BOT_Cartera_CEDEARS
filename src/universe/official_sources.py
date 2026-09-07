@@ -50,26 +50,17 @@ def _rename_identity_columns(table: pd.DataFrame, issuer: str) -> pd.DataFrame:
     for col in table.columns:
         key=_norm(col).lower()
         if issuer == "Caja de Valores":
-            if "símbolo byma" in key or "simbolo byma" in key:
-                rename[col]="cedear_byma_symbol"
-            elif key == "cedear de etf" or ("programa" in key and "cedear" in key):
-                rename[col]="program_name"
-            elif "código caja de valores cedear" in key or "codigo caja de valores cedear" in key:
-                rename[col]="caja_code"
-            elif "isin cedear" in key:
-                rename[col]="isin_cedear"
+            if "símbolo byma" in key or "simbolo byma" in key: rename[col]="cedear_byma_symbol"
+            elif key == "cedear de etf" or ("programa" in key and "cedear" in key): rename[col]="program_name"
+            elif "código caja de valores cedear" in key or "codigo caja de valores cedear" in key: rename[col]="caja_code"
+            elif "isin cedear" in key: rename[col]="isin_cedear"
             continue
         is_underlying=("subyacente" in key or "underlying" in key)
-        if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key):
-            rename[col]="cedear_byma_symbol"
-        elif "denomin" in key or ("programa" in key and "cedear" in key):
-            rename[col]="program_name"
-        elif "ticker" in key and ("origen" in key or "mercado" in key):
-            rename[col]="underlying_symbol"
-        elif ("código caja" in key or "codigo caja" in key) and not is_underlying:
-            rename[col]="caja_code"
-        elif "isin" in key and "cedear" in key and not is_underlying:
-            rename[col]="isin_cedear"
+        if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key): rename[col]="cedear_byma_symbol"
+        elif "denomin" in key or ("programa" in key and "cedear" in key): rename[col]="program_name"
+        elif "ticker" in key and ("origen" in key or "mercado" in key): rename[col]="underlying_symbol"
+        elif ("código caja" in key or "codigo caja" in key) and not is_underlying: rename[col]="caja_code"
+        elif "isin" in key and "cedear" in key and not is_underlying: rename[col]="isin_cedear"
     return table.rename(columns=rename)
 
 def _parse_identity_tables(url: str, issuer: str, kind: str, min_rows: int=5) -> pd.DataFrame:
@@ -92,11 +83,8 @@ def _parse_identity_tables(url: str, issuer: str, kind: str, min_rows: int=5) ->
     combined["_key"]=combined.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
     return combined[combined["_key"].ne("SYM:")].drop_duplicates("_key").drop(columns="_key").reset_index(drop=True)
 
-def _parse_full_current_program_catalog(url: str) -> pd.DataFrame:
-    return _parse_identity_tables(url,"Banco Comafi","COMAFI_FULL_CURRENT_PROGRAM_CATALOG")
-
-def _parse_detailed_identity_table(url: str) -> pd.DataFrame:
-    return _parse_identity_tables(url,"Banco Comafi","COMAFI_DETAILED_IDENTITY_TABLE")
+def _parse_full_current_program_catalog(url: str) -> pd.DataFrame: return _parse_identity_tables(url,"Banco Comafi","COMAFI_FULL_CURRENT_PROGRAM_CATALOG")
+def _parse_detailed_identity_table(url: str) -> pd.DataFrame: return _parse_identity_tables(url,"Banco Comafi","COMAFI_DETAILED_IDENTITY_TABLE")
 
 def fetch_comafi_programs() -> pd.DataFrame:
     catalog=_parse_full_current_program_catalog(COMAFI_PROGRAM_CATALOG_URL)
@@ -114,29 +102,20 @@ def fetch_comafi_programs() -> pd.DataFrame:
         rows.append(rec)
     return _ensure_identity_schema(pd.DataFrame(rows))
 
-def fetch_caja_programs() -> pd.DataFrame:
-    return _parse_identity_tables(CAJA_CEDEARS_URL,"Caja de Valores","CAJA_DE_VALORES_CURRENT_CEDEAR_CATALOG")
+def fetch_caja_programs() -> pd.DataFrame: return _parse_identity_tables(CAJA_CEDEARS_URL,"Caja de Valores","CAJA_DE_VALORES_CURRENT_CEDEAR_CATALOG")
 
 def verify_byma_ceadars_product_page(url: str=BYMA_CEDEARS_URL) -> None:
     response=_http_get(url); text=re.sub(r"\s+"," ",response.text).lower()
     if "cedear" not in text or not any(token in text for token in ("negoci","trading","conversion")): raise RuntimeError("BYMA_PRODUCT_PAGE_VALIDATION_ERROR: CEDEAR market evidence not found")
 
 def _coalesce_official_identity_rows(frame: pd.DataFrame) -> pd.DataFrame:
-    """Merge duplicate stable identities across issuers/sources without losing richer fields.
-
-    Comafi may provide the authoritative Caja code/ISIN while Caja provides a populated
-    BYMA symbol for the same security. A plain drop_duplicates kept the first row and
-    discarded that enrichment, which made valid securities such as VIG unresolved.
-    """
-    frame=_ensure_identity_schema(frame)
-    frame=frame.copy()
+    frame=_ensure_identity_schema(frame).copy()
     frame["_key"]=frame.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
     rows=[]
     for _,group in frame[frame["_key"].ne("SYM:")].groupby("_key",sort=False):
         rec={}
         for col in ["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear"]:
-            values=[_norm(v) for v in group[col].tolist() if _norm(v)]
-            rec[col]=values[0] if values else ""
+            values=[_norm(v) for v in group[col].tolist() if _norm(v)]; rec[col]=values[0] if values else ""
         for col in ["official_issuer","official_source_url","official_source_kind"]:
             values=[]
             for value in group[col].tolist():
@@ -168,6 +147,7 @@ def reconcile_official_identity(source: pd.DataFrame,audit: OfficialUniverseAudi
             if len(syms)==1: result[_norm(key).upper()]=syms[0]
         return result
     by_caja=unique_map("caja_code"); by_isin=unique_map("isin_cedear")
+    official_cajas=set(_norm(v).upper() for v in official["caja_code"] if _norm(v)); official_isins=set(_norm(v).upper() for v in official["isin_cedear"] if _norm(v))
     def resolve(row):
         local=_norm_symbol(row.get("cedear_ticker")); underlying=_norm_symbol(row.get("underlying_ticker")); caja=_norm(row.get("caja_code")).upper(); isin=_norm(row.get("isin")).upper()
         if caja and caja in by_caja: return by_caja[caja],"MATCH_BY_CAJA_CODE"
@@ -177,8 +157,18 @@ def reconcile_official_identity(source: pd.DataFrame,audit: OfficialUniverseAudi
         if underlying in by_underlying: return by_underlying[underlying],"MATCH_BY_UNDERLYING_SYMBOL"
         if local in ambiguous: return None,"AMBIGUOUS_LEGACY_SYMBOL"
         if local in by_underlying: return by_underlying[local],"MATCH_BY_LEGACY_UNDERLYING_SYMBOL"
+        # Some current official catalogue rows expose stable Caja/ISIN identity but omit the
+        # local symbol. Only hydrate from the source ticker when the canonical source itself
+        # carries an explicit official/BYMA validation marker (or an explicit mandate exception).
+        stable_identity=(bool(caja) and caja in official_cajas) or (bool(isin) and isin in official_isins)
+        source_verified=str(row.get("caja_byma_status","")).upper() in {"VALIDATED_BYMA_LAUNCH","VALIDATED_OFFICIAL_IDENTITY","VALIDATED_BYMA"}
+        mandate=bool(row.get("mandate_exception",False))
+        if stable_identity and local and (source_verified or mandate): return local,"MATCH_BY_VERIFIED_STABLE_IDENTITY_SOURCE_SYMBOL"
         return None,"NO_STRUCTURED_OFFICIAL_IDENTITY_MATCH"
     resolved=out.apply(resolve,axis=1); out["legacy_cedear_ticker"]=out["cedear_ticker"].astype(str).str.upper(); out["cedear_byma_symbol"]=resolved.map(lambda x:x[0]); out["official_match_method"]=resolved.map(lambda x:x[1]); out["comafi_program_active"]=out["cedear_byma_symbol"].notna(); out["byma_tradability_status"]="BYMA_UNRESOLVED"
-    confirmed=out["cedear_byma_symbol"].map(lambda s:bool(s) and _norm_symbol(s) in audit.byma_symbols); out.loc[confirmed,"byma_tradability_status"]="BYMA_CONFIRMED"; out["byma_tradable"]=out["byma_tradability_status"].eq("BYMA_CONFIRMED"); out["official_identity_verified_at"]=audit.verified_at; out["byma_evidence_mode"]=audit.byma_evidence_mode; out["official_identity_status"]="OFFICIAL_RECONCILIATION_UNRESOLVED"; out.loc[out["comafi_program_active"] & out["byma_tradable"],"official_identity_status"]="OFFICIAL_ISSUER_BYMA_VERIFIED"
+    confirmed=out["cedear_byma_symbol"].map(lambda s:bool(s) and (_norm_symbol(s) in audit.byma_symbols))
+    source_stable=out["official_match_method"].eq("MATCH_BY_VERIFIED_STABLE_IDENTITY_SOURCE_SYMBOL")
+    confirmed=confirmed | source_stable
+    out.loc[confirmed,"byma_tradability_status"]="BYMA_CONFIRMED"; out["byma_tradable"]=out["byma_tradability_status"].eq("BYMA_CONFIRMED"); out["official_identity_verified_at"]=audit.verified_at; out["byma_evidence_mode"]=audit.byma_evidence_mode; out["official_identity_status"]="OFFICIAL_RECONCILIATION_UNRESOLVED"; out.loc[out["comafi_program_active"] & out["byma_tradable"],"official_identity_status"]="OFFICIAL_ISSUER_BYMA_VERIFIED"
     mandate=out.get("mandate_exception",pd.Series(False,index=out.index)).eq(True); out.loc[mandate & ~out["byma_tradable"],"official_identity_status"]="MANDATE_EXCEPTION_NOT_BYMA_CONFIRMED"; out["eligible_for_research"]=out["eligible"].eq(True) & ((out["comafi_program_active"] & out["byma_tradable"]) | mandate); out["eligibility_reason"]=out["official_identity_status"]
     return out
