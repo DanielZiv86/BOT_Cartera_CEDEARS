@@ -79,12 +79,28 @@ jobs:
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
           top={str(x).upper() for x in d['topn_tickers']}
           assert len(top)==30
+
+          aliases={
+              'BA.C':'BA',
+              'BBV':'BBVA',
+              'TRVV':'TRV',
+          }
+
+          def normalize_symbol(x):
+              s=str(x).upper().strip()
+              return aliases.get(s,s)
+
           for path in ['data/upstream_local/cedear_local_market.parquet','data/upstream_portfolio/portfolio_fit_quantitative.parquet']:
               df=pd.read_parquet(path)
               col='cedear_ticker' if 'cedear_ticker' in df.columns else 'ticker'
-              out=df[df[col].astype(str).str.upper().isin(top)].copy()
-              missing=top-set(out[col].astype(str).str.upper())
-              assert not missing, f'{path} missing Top-N tickers: {sorted(missing)}'
+              raw=df[col].astype(str).str.upper().str.strip()
+              norm=raw.map(normalize_symbol)
+              top_norm={normalize_symbol(x) for x in top}
+              mask=norm.isin(top_norm)
+              out=df[mask].copy()
+              out[col]=norm[mask].values
+              missing=top_norm-set(out[col].astype(str).str.upper())
+              assert not missing, f'{path} missing Top-N identities after normalization: {sorted(missing)}'
               assert len(out)==30, (path,len(out))
               out.to_parquet(path,index=False)
           PY
