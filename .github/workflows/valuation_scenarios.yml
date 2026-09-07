@@ -67,6 +67,7 @@ jobs:
         run: |
           RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          export UNIVERSE_RUN_ID="$RUN_ID"
           echo "UNIVERSE_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_universe
           gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
@@ -80,7 +81,9 @@ jobs:
           out=u[u['cedear_ticker'].astype(str).str.upper().isin(tickers)].copy()
           assert len(out)==30
           out.to_parquet('data/upstream_universe/research_topn_universe.parquet', index=False)
-          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':305,'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
+          universe_run_id=os.environ.get('UNIVERSE_RUN_ID')
+          assert universe_run_id, 'UNIVERSE_RUN_ID missing in current step environment'
+          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(universe_run_id),'canonical_eligible_universe_count':305,'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
           open('data/upstream_universe/e2e_lineage.json','w').write(json.dumps(manifest,indent=2))
           PY
 
