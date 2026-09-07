@@ -33,6 +33,12 @@ class HoldingsSnapshot:
 class IssuerHoldingsConnector:
     """Fetch and normalize ETF holdings from issuer pages or configured fallbacks."""
 
+    VANGUARD_BROWSER_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     def __init__(self, sources: dict[str, Any], timeout: int = 30):
         self.sources = {str(k).upper(): v for k, v in (sources or {}).items()}
         self.timeout = timeout
@@ -105,11 +111,11 @@ class IssuerHoldingsConnector:
         holdings_limit = cfg.get("max_holdings_to_analyze")
         return HoldingsSnapshot(ticker=ticker, holdings=holdings, as_of=as_of, source_ref=source_ref, source_tier=tier, provider=str(cfg.get("provider") or "UNKNOWN"), freshness_max_age_days=int(freshness_override) if freshness_override is not None else None, max_holdings_to_analyze=int(holdings_limit) if holdings_limit is not None else None)
 
-    def _get(self, url: str) -> requests.Response:
+    def _get(self, url: str, headers: dict[str, str] | None = None) -> requests.Response:
         last_exc: Exception | None = None
         for attempt in range(1, 4):
             try:
-                response = self.session.get(url, timeout=self.timeout)
+                response = self.session.get(url, timeout=self.timeout, headers=headers)
                 response.raise_for_status()
                 _ = response.content
                 return response
@@ -122,13 +128,15 @@ class IssuerHoldingsConnector:
         raise IssuerHoldingsError("HTTP_RETRIEVAL_FAILED")
 
     def _fetch_vanguard_json(self, ticker: str) -> tuple[list[dict[str, Any]], str | None, str]:
-        """Use Vanguard's public issuer JSON feed; the product HTML is client-rendered."""
+        """Use Vanguard's public issuer JSON feed; it requires a real browser UA and JSON Accept header."""
         url = f"https://investor.vanguard.com/investment-products/etfs/profile/api/{ticker.upper()}/portfolio-holding/stock?start=1&count=50000"
-        response = self._get(url)
+        response = self._get(url, headers=self.VANGUARD_BROWSER_HEADERS)
+        content_type = str(response.headers.get("Content-Type") or "")
         try:
             payload = response.json()
         except ValueError as exc:
-            raise IssuerHoldingsError(f"VANGUARD_JSON_INVALID:{exc}") from exc
+            preview = re.sub(r"\s+", " ", response.text[:120]).strip()
+            raise IssuerHoldingsError(f"VANGUARD_JSON_INVALID:content_type={content_type}:body={preview!r}:{exc}") from exc
         entities = (((payload.get("fund") or {}).get("entity")) or []) if isinstance(payload, dict) else []
         rows: list[dict[str, Any]] = []
         for item in entities:
@@ -147,7 +155,7 @@ class IssuerHoldingsConnector:
         as_of_raw = str(payload.get("asOfDate") or "") if isinstance(payload, dict) else ""
         as_of_match = re.match(r"(\d{4}-\d{2}-\d{2})", as_of_raw)
         as_of = as_of_match.group(1) if as_of_match else None
-        print(f"VANGUARD_JSON_DIAGNOSTIC ticker={ticker.upper()} status={response.status_code} holdings={len(rows)} as_of={as_of}")
+        print(f"VANGUARD_JSON_DIAGNOSTIC ticker={ticker.upper()} status={response.status_code} content_type={content_type} holdings={len(rows)} as_of={as_of}")
         if not rows:
             raise IssuerHoldingsError("VANGUARD_JSON_NO_HOLDINGS")
         if as_of is None:
