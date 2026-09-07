@@ -35,7 +35,7 @@ class IssuerHoldingsConnector:
 
     VANGUARD_BROWSER_HEADERS = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
+        "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
@@ -100,7 +100,7 @@ class IssuerHoldingsConnector:
         elif mode == "ishares_ucits_html":
             holdings, as_of = self._fetch_ishares_ucits_html(url)
         elif mode in {"vanguard_html", "vanguard_json"}:
-            holdings, as_of, source_ref = self._fetch_vanguard_json(ticker)
+            holdings, as_of, source_ref = self._fetch_vanguard(ticker, url)
         elif mode == "html_table":
             holdings, as_of = self._fetch_html_table(url)
         else:
@@ -127,8 +127,29 @@ class IssuerHoldingsConnector:
             raise last_exc
         raise IssuerHoldingsError("HTTP_RETRIEVAL_FAILED")
 
+    def _fetch_vanguard(self, ticker: str, official_url: str) -> tuple[list[dict[str, Any]], str | None, str]:
+        """Prefer Vanguard JSON, then fail over to the official advisor HTML holdings table."""
+        try:
+            return self._fetch_vanguard_json(ticker)
+        except Exception as json_exc:  # noqa: BLE001
+            print(f"VANGUARD_JSON_FALLBACK ticker={ticker.upper()} reason={type(json_exc).__name__}:{json_exc}")
+        response = self._get(official_url, headers={**self.VANGUARD_BROWSER_HEADERS, "Accept": "text/html,application/xhtml+xml"})
+        text = response.text
+        tables = pd.read_html(io.StringIO(text))
+        best: list[dict[str, Any]] = []
+        for table in tables:
+            normalized = self._normalize_table(table)
+            if len(normalized) > len(best):
+                best = normalized
+        as_of = self._extract_date(text)
+        print(f"VANGUARD_HTML_DIAGNOSTIC ticker={ticker.upper()} holdings={len(best)} as_of={as_of}")
+        if not best:
+            raise IssuerHoldingsError("VANGUARD_HTML_NO_HOLDINGS")
+        if as_of is None:
+            raise IssuerHoldingsError("VANGUARD_HTML_AS_OF_MISSING")
+        return best, as_of, official_url
+
     def _fetch_vanguard_json(self, ticker: str) -> tuple[list[dict[str, Any]], str | None, str]:
-        """Use Vanguard's public issuer JSON feed; it requires a real browser UA and JSON Accept header."""
         url = f"https://investor.vanguard.com/investment-products/etfs/profile/api/{ticker.upper()}/portfolio-holding/stock?start=1&count=50000"
         response = self._get(url, headers=self.VANGUARD_BROWSER_HEADERS)
         content_type = str(response.headers.get("Content-Type") or "")
