@@ -10,7 +10,7 @@ quality:
   minimum_etf_covered_weight: 0.50
   minimum_etf_valid_holdings: 5
   maximum_etf_holdings_to_analyze: 50
-  maximum_direct_constituent_lookups_per_etf: 12
+  maximum_direct_constituent_lookups_per_etf: 20
   preferred_global_direct_constituent_lookups: 40
   maximum_global_direct_constituent_lookups: 60
 provider_fallbacks:
@@ -46,7 +46,7 @@ notes:
   - Equity ETF scenarios use official issuer holdings and canonical equity scenarios first.
   - ETF direct lookups are allocated by a deterministic marginal-coverage planner: funds closest to the 50% look-through hurdle with the fewest estimated uncached constituents are processed first instead of FIFO universe order.
   - The preferred global direct-constituent budget is 40, while 60 is a hard cap that allows limited recovery when additional lookups can improve usable coverage without returning to the ~800-request regime.
-  - A maximum of 12 uncached constituents may be queried per ETF; successes and failures remain shared in the constituent cache across funds.
+  - A maximum of 20 uncached constituents may be queried per ETF during Top-N deep valuation, still bounded by the 60-call global hard cap; successes and failures remain shared in the constituent cache across funds.
   - ETF look-through stops deterministically once minimum covered weight and minimum valid-holding count are both satisfied.
   - Finnhub Premium ETF endpoints are disabled for the current plan because real production calls returned 403; they can only be re-enabled explicitly by policy.
   - Issuer-specific holdings freshness may override the 35-day default when the issuer publishes on a slower documented cadence; the same fund-specific threshold is inherited by configured fallback sources and the applied threshold is emitted in each ETF row.
