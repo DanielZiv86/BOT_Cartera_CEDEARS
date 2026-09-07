@@ -3,38 +3,28 @@ from __future__ import annotations
 import pandas as pd
 
 
-def build_ranking(screening: pd.DataFrame, top_n: int = 30) -> pd.DataFrame:
-    """Rank score-ready tickers deterministically and flag the Top-N.
-
-    Blocked tickers remain in the output for full-universe auditability but receive
-    neither rank nor selection status.
-    """
+def build_ranking(screening: pd.DataFrame, top_n: int = 30, min_top_data_quality: float = 60.0) -> pd.DataFrame:
+    """Rank every canonical ticker and select evidence-qualified Top-N names."""
     if top_n < 1:
         raise ValueError("top_n must be >= 1")
-    required = {"cedear_ticker", "screening_score", "screening_status"}
+    required = {"cedear_ticker", "screening_score", "screening_status", "data_quality_score"}
     missing = sorted(required - set(screening.columns))
     if missing:
         raise ValueError("screening frame missing columns: " + ", ".join(missing))
+    if screening.empty or screening["cedear_ticker"].duplicated().any():
+        raise ValueError("screening must contain unique canonical tickers")
+    if screening["screening_score"].isna().any():
+        raise ValueError("complete ranking requires a score for every canonical ticker")
 
-    result = screening.copy()
-    result["rank"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
-    result["selected"] = False
-
-    ready_mask = result["screening_status"].eq("SCORE_READY") & result["screening_score"].notna()
-    ready = result.loc[ready_mask, ["cedear_ticker", "screening_score"]].copy()
-    ready = ready.sort_values(
-        ["screening_score", "cedear_ticker"],
-        ascending=[False, True],
-        kind="mergesort",
-    )
-    ready["rank"] = range(1, len(ready) + 1)
-
-    rank_map = ready.set_index("cedear_ticker")["rank"]
-    result.loc[ready_mask, "rank"] = result.loc[ready_mask, "cedear_ticker"].map(rank_map).astype("Int64")
-    result.loc[ready_mask, "selected"] = result.loc[ready_mask, "rank"].le(top_n).fillna(False)
-
-    return result.sort_values(
-        ["rank", "cedear_ticker"],
-        ascending=[True, True],
-        na_position="last",
+    result = screening.copy().sort_values(
+        ["screening_score", "data_quality_score", "cedear_ticker"],
+        ascending=[False, False, True], kind="mergesort"
     ).reset_index(drop=True)
+    result["rank"] = pd.Series(range(1, len(result) + 1), dtype="Int64")
+    result["percentile"] = ((len(result) - result["rank"] + 1) / len(result) * 100.0).astype(float).round(2)
+    eligible = result["screening_status"].eq("SCORE_READY") & result["data_quality_score"].ge(min_top_data_quality)
+    result["top_n_eligibility"] = eligible
+    result["selected"] = False
+    eligible_positions = result.index[eligible].tolist()[:top_n]
+    result.loc[eligible_positions, "selected"] = True
+    return result
