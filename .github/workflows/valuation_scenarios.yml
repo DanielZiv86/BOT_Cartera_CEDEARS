@@ -41,11 +41,16 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             RESEARCH_RUN_ID="${{ github.event.workflow_run.id }}"
+            RESEARCH_COMMIT="${{ github.event.workflow_run.head_sha }}"
           else
-            RESEARCH_RUN_ID=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            RESEARCH_META=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId,headSha --jq '.[0]')
+            RESEARCH_RUN_ID=$(echo "$RESEARCH_META" | python -c 'import json,sys; print(json.load(sys.stdin)["databaseId"])')
+            RESEARCH_COMMIT=$(echo "$RESEARCH_META" | python -c 'import json,sys; print(json.load(sys.stdin)["headSha"])')
           fi
           test -n "$RESEARCH_RUN_ID" && test "$RESEARCH_RUN_ID" != "null"
+          test -n "$RESEARCH_COMMIT" && test "$RESEARCH_COMMIT" != "null"
           echo "RESEARCH_RUN_ID=$RESEARCH_RUN_ID" >> "$GITHUB_ENV"
+          echo "RESEARCH_COMMIT=$RESEARCH_COMMIT" >> "$GITHUB_ENV"
           mkdir -p data/upstream_research
           gh run download "$RESEARCH_RUN_ID" --name research-mvp-screening --dir data/upstream_research
           python - <<'PY'
@@ -65,7 +70,7 @@ jobs:
           mkdir -p data/upstream_universe
           gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
           python - <<'PY'
-          import json, pandas as pd
+          import json, os, pandas as pd
           r=pd.read_parquet('data/upstream_research/research_screening.parquet')
           u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet')
           assert len(r)==305 and r['rank'].notna().all()
@@ -74,7 +79,8 @@ jobs:
           out=u[u['cedear_ticker'].astype(str).str.upper().isin(tickers)].copy()
           assert len(out)==30, (len(out), tickers-set(out['cedear_ticker'].astype(str).str.upper()))
           out.to_parquet('data/upstream_universe/research_topn_universe.parquet', index=False)
-          manifest={'e2e_run_id':'${{ env.E2E_RUN_ID }}','research_run_id':int('${{ env.RESEARCH_RUN_ID }}'),'research_commit':'${{ github.event.workflow_run.head_sha }}','top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
+          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
+          assert manifest['research_commit'], 'research_commit must be populated'
           open('data/upstream_universe/e2e_lineage.json','w').write(json.dumps(manifest,indent=2))
           PY
 
@@ -103,6 +109,7 @@ jobs:
           df=pd.read_parquet(p)
           assert len(df)==30, f'valuation must preserve Research Top-30, got {len(df)}'
           lineage=json.loads(Path('data/upstream_universe/e2e_lineage.json').read_text())
+          assert lineage.get('research_commit'), 'missing research commit lineage'
           lineage['valuation_run_id']=int('${{ github.run_id }}')
           lineage['price_run_id']=int('${{ env.PRICE_RUN_ID }}')
           lineage['valuation_count']=len(df)
