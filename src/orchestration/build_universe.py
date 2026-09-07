@@ -36,19 +36,23 @@ def main():
         record=dict(row,user_mandate_excluded=False,user_mandate_exclusion_reason=None,universe_override_inclusion=True,universe_override_reason=inc.get("reason_code","EXPLICIT_UNIVERSE_INCLUSION")); canonical=pd.concat([canonical,pd.DataFrame([record])],ignore_index=True); included.append(ticker)
 
     audit=fetch_official_universe_audit(); canonical=reconcile_official_identity(canonical,audit)
-    unresolved=canonical[(~canonical["user_mandate_excluded"]) & (~canonical["eligible_for_research"])]
-    # Fail closed: stale/ambiguous identities may not silently enter Research.
-    # They remain in the audit artifact but are excluded from the eligible artifact.
-    eligible=canonical[(~canonical["user_mandate_excluded"]) & canonical["eligible_for_research"]].copy()
+    active=canonical[~canonical["user_mandate_excluded"]].copy()
+    unresolved=active[active["byma_tradability_status"].eq("BYMA_UNRESOLVED")].copy()
+    eligible=active[active["eligible_for_research"]].copy()
     eligible["cedear_ticker"]=eligible["cedear_byma_symbol"].astype(str).str.upper()
     if eligible["cedear_ticker"].duplicated().any(): raise SystemExit("Official reconciliation produced duplicate BYMA symbols")
     eligible=eligible.sort_values("cedear_ticker").reset_index(drop=True); symbol_map=build_symbol_map(eligible,load_alias_config(args.aliases))
-    if len(symbol_map)!=len(eligible) or symbol_map["cedear_byma_symbol"].isna().any(): raise SystemExit("UNIVERSE_GATE_FAILED: symbol map is not 100% reconciled")
+    symbol_map_ok=len(symbol_map)==len(eligible) and not symbol_map["cedear_byma_symbol"].isna().any()
+    mandate_exception_tickers=sorted(active.loc[active.get("mandate_exception",False).eq(True),"legacy_cedear_ticker"].astype(str).tolist()) if "mandate_exception" in active.columns else []
+    missing_mandate_exceptions=sorted(set(mandate_exception_tickers)-set(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).tolist()))
+    gate_ok=symbol_map_ok and unresolved.empty and not missing_mandate_exceptions
     out=Path(args.output_dir); out.mkdir(parents=True,exist_ok=True)
     eligible.to_parquet(out/"cedear_universe_master.parquet",index=False); eligible.to_json(out/"cedear_universe_master.json",orient="records",indent=2,force_ascii=False)
     canonical[canonical["user_mandate_excluded"]].to_json(out/"cedear_mandate_exclusions.json",orient="records",indent=2,force_ascii=False); canonical[canonical["universe_override_inclusion"]==True].to_json(out/"cedear_universe_inclusions.json",orient="records",indent=2,force_ascii=False)
-    unresolved.to_json(out/"cedear_official_reconciliation_exclusions.json",orient="records",indent=2,force_ascii=False)
+    unresolved.to_json(out/"cedear_official_reconciliation_unresolved.json",orient="records",indent=2,force_ascii=False)
     symbol_map.to_parquet(out/"security_symbol_map.parquet",index=False); symbol_map.to_json(out/"security_symbol_map.json",orient="records",indent=2,force_ascii=False)
-    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_excluded_count":int(len(unresolved)),"official_reconciliation_excluded_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if len(eligible)==len(symbol_map) else "FAIL","mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist()}
+    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
     (out/"universe_manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8"); print(json.dumps(manifest,indent=2,ensure_ascii=False))
+    if not gate_ok:
+        raise SystemExit(f"UNIVERSE_GATE_FAILED: unresolved={len(unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
 if __name__=="__main__": main()
