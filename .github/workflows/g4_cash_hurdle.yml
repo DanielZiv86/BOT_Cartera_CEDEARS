@@ -49,20 +49,22 @@ jobs:
           assert d.get('top_n') == 30 and len(top) == 30, d
           assert d.get('valuation_count') == 30 and len(v) == 30, d
           assert set(v['cedear_ticker'].astype(str).str.upper()) == top
+          assert d.get('local_market_run_id'), 'valuation lineage must pin local_market_run_id'
+          assert d.get('portfolio_run_id'), 'valuation lineage must pin portfolio_run_id'
           PY
 
-      - name: Download latest CEDEAR local market layer
+      - name: Download lineage-pinned CEDEAR local market layer
         run: |
-          RUN_ID=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          RUN_ID=$(python -c "import json; print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['local_market_run_id'])")
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
           echo "LOCAL_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_local
           gh run download "$RUN_ID" --name cedear-local-market-layer --dir data/upstream_local
           test -f data/upstream_local/cedear_local_market.parquet
 
-      - name: Download latest portfolio state layer
+      - name: Download lineage-pinned portfolio state layer
         run: |
-          RUN_ID=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          RUN_ID=$(python -c "import json; print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['portfolio_run_id'])")
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
           echo "PORTFOLIO_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_portfolio
@@ -74,7 +76,6 @@ jobs:
         run: |
           python - <<'PY'
           import json, pandas as pd
-          from pathlib import Path
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
           top={str(x).upper() for x in d['topn_tickers']}
           assert len(top)==30
