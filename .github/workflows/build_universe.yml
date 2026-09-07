@@ -7,6 +7,7 @@ on:
       - "data/input/CEDEAR_Universe_Master_v2.json"
       - "src/universe/**"
       - "src/orchestration/build_universe.py"
+      - "src/orchestration/diagnose_universe_sources.py"
       - "config/symbol_aliases.yml"
       - "config/mandate_exclusions.yml"
       - "config/universe_inclusions.yml"
@@ -32,6 +33,8 @@ jobs:
         run: pytest -q tests/test_universe.py
       - name: Check canonical source exists
         run: test -f data/input/CEDEAR_Universe_Master_v2.json || (echo "Missing canonical source" && exit 2)
+      - name: Diagnose official sources
+        run: python -m src.orchestration.diagnose_universe_sources
       - name: Build and reconcile official universe
         run: |
           python -m src.orchestration.build_universe \
@@ -52,12 +55,13 @@ jobs:
           assert m['canonical_eligible_count']>0, m
           print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'])
           PY
-      - name: Upload universe artifacts
+      - name: Upload universe diagnostics and artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: canonical-universe
           path: |
+            data/canonical/universe_source_diagnostics.json
             data/canonical/cedear_universe_master.json
             data/canonical/cedear_universe_master.parquet
             data/canonical/cedear_mandate_exclusions.json
