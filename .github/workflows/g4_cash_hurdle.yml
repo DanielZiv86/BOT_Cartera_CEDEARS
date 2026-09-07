@@ -77,32 +77,52 @@ jobs:
           python - <<'PY'
           import json, pandas as pd
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'))
-          top={str(x).upper() for x in d['topn_tickers']}
-          assert len(top)==30
+          top=[str(x).upper().strip() for x in d['topn_tickers']]
+          assert len(top)==30 and len(set(top))==30
 
-          aliases={
+          # Historical aliases are used only as deterministic fallbacks.  An
+          # exact local BYMA symbol always wins, so BA and BA.C cannot both be
+          # selected for the same Research identity.
+          fallback_aliases={
               'BA.C':'BA',
               'BBV':'BBVA',
               'TRVV':'TRV',
           }
 
-          def normalize_symbol(x):
-              s=str(x).upper().strip()
-              return aliases.get(s,s)
+          def raw_symbol(x):
+              return str(x).upper().strip()
+
+          def candidates_for(target, raw):
+              exact=raw[raw.eq(target)].index.tolist()
+              if exact:
+                  return exact, 'EXACT'
+              target_alias=fallback_aliases.get(target,target)
+              matches=[]
+              for idx,s in raw.items():
+                  if fallback_aliases.get(s,s)==target_alias:
+                      matches.append(idx)
+              return matches, 'ALIAS'
 
           for path in ['data/upstream_local/cedear_local_market.parquet','data/upstream_portfolio/portfolio_fit_quantitative.parquet']:
               df=pd.read_parquet(path)
               col='cedear_ticker' if 'cedear_ticker' in df.columns else 'ticker'
-              raw=df[col].astype(str).str.upper().str.strip()
-              norm=raw.map(normalize_symbol)
-              top_norm={normalize_symbol(x) for x in top}
-              mask=norm.isin(top_norm)
-              out=df[mask].copy()
-              out[col]=norm[mask].values
-              missing=top_norm-set(out[col].astype(str).str.upper())
-              assert not missing, f'{path} missing Top-N identities after normalization: {sorted(missing)}'
-              assert len(out)==30, (path,len(out))
+              raw=df[col].map(raw_symbol)
+              selected=[]
+              audit=[]
+              for target in top:
+                  matches,method=candidates_for(target,raw)
+                  assert len(matches)==1, f'{path} identity {target}: {method} matches={[(i,raw.loc[i]) for i in matches]}'
+                  idx=matches[0]
+                  assert idx not in selected, f'{path} source row reused for multiple Top-N identities: {target} -> {raw.loc[idx]}'
+                  selected.append(idx)
+                  audit.append({'research_ticker':target,'source_ticker':raw.loc[idx],'match_method':method})
+              out=df.loc[selected].copy().reset_index(drop=True)
+              # Downstream joins must use the immutable Research identity, not
+              # whichever historical alias happened to exist upstream.
+              out[col]=top
+              assert len(out)==30 and out[col].nunique()==30, (path,len(out),out[col].nunique())
               out.to_parquet(path,index=False)
+              print(path, pd.DataFrame(audit).to_dict(orient='records'))
           PY
 
       - name: Build G4 Cash Hurdle from same Research lineage
