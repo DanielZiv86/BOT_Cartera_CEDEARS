@@ -8,8 +8,11 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
+# Current structured Comafi catalogue. This page contains Shares and ETFs in one
+# authoritative table and exposes the fields needed for official reconciliation.
+COMAFI_PROGRAM_CATALOG_URL = "https://www.comafi.com.ar/Programas-CEDEARs-2483.note.aspx"
+# Legacy detail page kept only as supplementary identity evidence.
 COMAFI_SHARES_DETAIL_URL = "https://www.comafi.com.ar/CEDEAR-SHARES-2254.note.aspx"
-COMAFI_PROGRAM_CATALOG_URL = "https://www.comafi.com.ar/CEDEARs-2258.note.aspx"
 COMAFI_PROGRAMS_URL = "https://www.comafi.com.ar/custodiaglobal/programas.aspx"
 BYMA_CEDEARS_URL = "https://www.byma.com.ar/productos/productos-financieros/cedears"
 
@@ -54,25 +57,42 @@ def _rename_catalog_columns(table: pd.DataFrame) -> pd.DataFrame:
     rename: dict[object, str] = {}
     for col in table.columns:
         key = _norm(col).lower()
-        if ("identificación" in key and "mercado" in key) or ("identificacion" in key and "mercado" in key): rename[col] = "cedear_byma_symbol"
-        elif "denomin" in key or "programa" in key: rename[col] = "program_name"
-        elif "código caja" in key or "codigo caja" in key: rename[col] = "caja_code"
+        # Current Comafi catalogue calls the local/BYMA identifier "Id de mercado".
+        if (("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key:
+            rename[col] = "cedear_byma_symbol"
+        elif "denomin" in key or ("programa" in key and "cedear" in key):
+            rename[col] = "program_name"
+        elif "ticker" in key and ("origen" in key or "mercado" in key):
+            rename[col] = "underlying_symbol"
+        elif "código caja" in key or "codigo caja" in key:
+            rename[col] = "caja_code"
     return table.rename(columns=rename)
 
 
 def _parse_full_current_program_catalog(url: str) -> pd.DataFrame:
-    response = _http_get(url); tables = pd.read_html(io.StringIO(response.text)); candidates=[]
+    response = _http_get(url)
+    try:
+        tables = pd.read_html(io.StringIO(response.text))
+    except ValueError as exc:
+        raise RuntimeError(f"COMAFI_PARSE_ERROR: no HTML tables found at current catalogue {url}") from exc
+    candidates=[]
     for table in tables:
-        if len(table) < 5: continue
+        if len(table) < 5:
+            continue
         out = _ensure_identity_schema(_rename_catalog_columns(table.copy()))
-        if not out["cedear_byma_symbol"].str.match(r"^[A-Z][A-Z0-9./-]{0,11}$", na=False).any(): continue
-        out = out[out["cedear_byma_symbol"].str.match(r"^[A-Z][A-Z0-9./-]{0,11}$", na=False)].copy()
-        if len(out) < 5: continue
+        valid = out["cedear_byma_symbol"].str.match(r"^[A-Z][A-Z0-9./-]{0,11}$", na=False)
+        if not valid.any():
+            continue
+        out = out[valid].copy()
+        if len(out) < 5:
+            continue
         out.loc[out["program_name"].eq(""),"program_name"] = out["cedear_byma_symbol"]
         out.loc[out["underlying_symbol"].eq(""),"underlying_symbol"] = out["cedear_byma_symbol"]
-        out["official_source_url"] = url; out["official_source_kind"] = "FULL_CURRENT_PROGRAM_CATALOG"
+        out["official_source_url"] = url
+        out["official_source_kind"] = "FULL_CURRENT_PROGRAM_CATALOG"
         candidates.append(out[["program_name","cedear_byma_symbol","underlying_symbol","caja_code","official_source_url","official_source_kind"]])
-    if not candidates: raise RuntimeError(f"COMAFI_PARSE_ERROR: full current program catalogue not found at {url}")
+    if not candidates:
+        raise RuntimeError(f"COMAFI_PARSE_ERROR: full current program catalogue not found at {url}")
     return pd.concat(candidates,ignore_index=True).drop_duplicates("cedear_byma_symbol").reset_index(drop=True)
 
 
@@ -107,7 +127,10 @@ def fetch_comafi_programs() -> pd.DataFrame:
                 by_symbol.loc[symbol,"underlying_symbol"]=row.underlying_symbol
                 if _norm(row.caja_code): by_symbol.loc[symbol,"caja_code"]=_norm(row.caja_code)
                 by_symbol.loc[symbol,"official_source_kind"]="FULL_CATALOG_PLUS_DETAILED_IDENTITY"
-            else: by_symbol.loc[symbol]=row
+            else:
+                # Do not let a legacy detail page expand the current catalogue.
+                # Current membership must come from COMAFI_PROGRAM_CATALOG_URL.
+                continue
     return _ensure_identity_schema(by_symbol.reset_index(drop=True))
 
 
@@ -118,6 +141,8 @@ def verify_byma_ceadars_product_page(url: str = BYMA_CEDEARS_URL) -> None:
 
 def fetch_official_universe_audit() -> OfficialUniverseAudit:
     verify_byma_ceadars_product_page(); comafi=fetch_comafi_programs()
+    # Preserve the strict gate: a materially incomplete official catalogue must
+    # stop the pipeline rather than silently certify a partial universe.
     if len(comafi)<300: raise RuntimeError(f"COMAFI_COVERAGE_ERROR: current catalogue unexpectedly small ({len(comafi)}); refusing to certify universe")
     return OfficialUniverseAudit(comafi=comafi,byma_symbols=set(comafi["cedear_byma_symbol"].astype(str)),verified_at=datetime.now(timezone.utc).isoformat(),byma_evidence_mode="BYMA_MARKET_AUTHORITY_PLUS_COMAFI_FULL_CURRENT_CATALOG")
 
