@@ -48,7 +48,7 @@ def test_caja_table_keeps_only_cedear_stable_identifiers():
         "Código Caja de Valores ETF/Acción":["7747"],
         "ISIN ETF/Acción":["US78462F1030"],
     })
-    renamed=_rename_identity_columns(table)
+    renamed=_rename_identity_columns(table,"Caja de Valores")
     assert not renamed.columns.duplicated().any()
     assert renamed.loc[0,"caja_code"]=="8549"
     assert renamed.loc[0,"isin_cedear"]=="ARCAVA460131"
