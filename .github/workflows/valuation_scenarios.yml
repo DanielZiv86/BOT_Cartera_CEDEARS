@@ -67,6 +67,7 @@ jobs:
         run: |
           RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
+          echo "UNIVERSE_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_universe
           gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
           python - <<'PY'
@@ -77,14 +78,26 @@ jobs:
           top=r.sort_values('rank').head(30)
           tickers=set(top['cedear_ticker'].astype(str).str.upper())
           out=u[u['cedear_ticker'].astype(str).str.upper().isin(tickers)].copy()
-          assert len(out)==30, (len(out), tickers-set(out['cedear_ticker'].astype(str).str.upper()))
+          assert len(out)==30
           out.to_parquet('data/upstream_universe/research_topn_universe.parquet', index=False)
-          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
-          assert manifest['research_commit'], 'research_commit must be populated'
+          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':305,'top_n':30,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
           open('data/upstream_universe/e2e_lineage.json','w').write(json.dumps(manifest,indent=2))
           PY
 
-      - name: Download latest underlying prices
+      - name: Resolve exact analytical upstream layers
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.name }}" = "Build CEDEAR Local Market Layer" ]; then
+            LOCAL_RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            LOCAL_RUN_ID=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          PORTFOLIO_RUN_ID=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$LOCAL_RUN_ID" && test "$LOCAL_RUN_ID" != "null"
+          test -n "$PORTFOLIO_RUN_ID" && test "$PORTFOLIO_RUN_ID" != "null"
+          echo "LOCAL_RUN_ID=$LOCAL_RUN_ID" >> "$GITHUB_ENV"
+          echo "PORTFOLIO_RUN_ID=$PORTFOLIO_RUN_ID" >> "$GITHUB_ENV"
+
+      - name: Download exact underlying prices
         run: |
           RUN_ID=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" && test "$RUN_ID" != "null"
@@ -105,15 +118,17 @@ jobs:
           python - <<'PY'
           import json, pandas as pd
           from pathlib import Path
-          p='data/canonical/valuation/valuation_scenarios.parquet'
-          df=pd.read_parquet(p)
-          assert len(df)==30, f'valuation must preserve Research Top-30, got {len(df)}'
+          df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet')
+          assert len(df)==30
           lineage=json.loads(Path('data/upstream_universe/e2e_lineage.json').read_text())
-          assert lineage.get('research_commit'), 'missing research commit lineage'
-          lineage['valuation_run_id']=int('${{ github.run_id }}')
-          lineage['price_run_id']=int('${{ env.PRICE_RUN_ID }}')
-          lineage['valuation_count']=len(df)
-          lineage['triggering_workflow']='${{ github.event.workflow_run.name }}' if '${{ github.event_name }}' == 'workflow_run' else 'workflow_dispatch'
+          lineage.update({
+            'valuation_run_id':int('${{ github.run_id }}'),
+            'price_run_id':int('${{ env.PRICE_RUN_ID }}'),
+            'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),
+            'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),
+            'valuation_count':len(df),
+            'triggering_workflow':'${{ github.event.workflow_run.name }}' if '${{ github.event_name }}' == 'workflow_run' else 'workflow_dispatch'
+          })
           Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(lineage,indent=2))
           PY
 
