@@ -12,6 +12,7 @@ from src.connectors.data912 import Data912CedearConnector
 from src.connectors.iol import IOLCedearConnector
 from src.market_data.cedear_local import build_local_market_layer, build_local_market_metrics
 from src.market_data.local_market_diagnostics import build_local_market_blocker_diagnostics
+from src.market_data.local_market_recovery import recover_analytical_local_market
 
 
 def main() -> int:
@@ -88,6 +89,7 @@ def main() -> int:
         ccl_reference=ccl_reference,
         brokerage_rate=args.brokerage_rate,
     )
+    layer = recover_analytical_local_market(layer)
     metrics = build_local_market_metrics(layer)
     blocker_diagnostics = build_local_market_blocker_diagnostics(layer)
 
@@ -102,7 +104,9 @@ def main() -> int:
 
     ccl_cols = [
         "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier", "ratio_used", "ratio_status",
-        "last_price_ars", "bid_ars", "ask_ars", "validated_mid_ars", "analytical_local_ref_ars", "last_close", "currency",
+        "ratio_validation_method", "canonical_ratio_ccl_deviation_pct",
+        "last_price_ars", "bid_ars", "ask_ars", "validated_mid_ars", "observed_analytical_local_ref_ars",
+        "analytical_local_ref_ars", "analytical_reference_method", "analytical_recovery_applied", "last_close", "currency",
         "implied_ccl", "market_ccl_reference", "ccl_deviation_vs_market_pct", "market_ccl_crosscheck_status", "ccl_status",
         "ccl_reference_mark", "ccl_deviation_vs_data912_pct", "data912_ccl_diagnostic_status",
         "spread_pct", "book_sanity_status", "market_session_status", "execution_book_status",
@@ -115,8 +119,8 @@ def main() -> int:
 
     ratio_audit_cols = [
         "cedear_ticker", "universe_ratio", "comafi_ratio_text", "comafi_ratio_multiplier", "ratio_used",
-        "ratio_deviation_vs_universe_pct", "ratio_status", "ratio_conflict", "comafi_program_name",
-        "comafi_underlying_ticker", "comafi_caja_code", "comafi_source_ref",
+        "ratio_deviation_vs_universe_pct", "ratio_status", "ratio_validation_method", "canonical_ratio_ccl_deviation_pct",
+        "ratio_conflict", "comafi_program_name", "comafi_underlying_ticker", "comafi_caja_code", "comafi_source_ref",
     ]
     ratio_audit = layer[[c for c in ratio_audit_cols if c in layer.columns]].copy()
     ratio_audit.to_json(out / "comafi_ratio_audit.json", orient="records", indent=2, force_ascii=False)
@@ -128,12 +132,14 @@ def main() -> int:
 
     manifest = {
         "layer": "CEDEAR Local Market + Implied CCL",
-        "version": "1.3",
+        "version": "1.4",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "brokerage_rate_per_side": args.brokerage_rate,
         "ratio_convention": "Comafi CEDEAR:underlying multiplier = numerator/denominator; implied_ccl = local_ARS * multiplier / underlying_USD",
         "provider_priority": ["IOL", "Data912"],
         "ratio_primary_source": "Banco Comafi Programas CEDEARs current registry",
+        "ratio_recovery_policy": "Canonical universe ratio may receive analytical PASS_WITH_WARNING only when independently reconciled to robust market CCL within 5%.",
+        "analytical_reference_policy": "Missing or clearly inconsistent local quotes may use underlying*market_CCL/validated_ratio for analytical G4 only; this never creates execution readiness.",
         "ccl_primary_validation": "robust median of cross-sectional implied CCL using Comafi-validated ratios",
         "ccl_secondary_diagnostic": "Data912 /live/ccl per ticker; diagnostic only, never sole blocking source",
         "execution_policy": "bid/ask is executable only during Argentina market session and after sanity validation",
