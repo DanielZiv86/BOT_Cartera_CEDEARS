@@ -50,7 +50,7 @@ def _rename_identity_columns(table: pd.DataFrame) -> pd.DataFrame:
         if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key): rename[col]="cedear_byma_symbol"
         elif "denomin" in key or ("programa" in key and "cedear" in key) or key=="cedear de etf": rename[col]="program_name"
         elif "ticker" in key and ("origen" in key or "mercado" in key): rename[col]="underlying_symbol"
-        elif ("código caja" in key or "codigo caja" in key) and "cedear" in key and not is_underlying: rename[col]="caja_code"
+        elif ("código caja" in key or "codigo caja" in key) and not is_underlying: rename[col]="caja_code"
         elif "isin" in key and "cedear" in key and not is_underlying: rename[col]="isin_cedear"
     return table.rename(columns=rename)
 
