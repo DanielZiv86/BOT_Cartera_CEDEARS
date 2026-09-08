@@ -7,8 +7,37 @@ from pathlib import Path
 import pandas as pd
 
 from src.market_data.history_layer import build_underlying_history
-from src.universe.loader import eligible_universe_frame, load_universe_json
+from src.universe.loader import load_universe_json
 from src.universe.symbol_map import build_symbol_map, load_alias_config
+
+
+def _current_holding_identity_rows(portfolio: dict, tickers: set[str]) -> pd.DataFrame:
+    """Return explicitly identified current holdings embedded in the portfolio snapshot.
+
+    Portfolio market-data identity is deliberately independent from Research eligibility.
+    We never infer an underlying for an unresolved holding: the snapshot must carry the
+    minimum identity required to obtain foreign-market history.
+    """
+    rows = []
+    for position in portfolio.get("positions", []):
+        ticker = str(position.get("cedear_ticker") or "").strip().upper()
+        if ticker not in tickers:
+            continue
+        underlying = str(position.get("underlying_ticker") or "").strip()
+        market = str(position.get("underlying_market") or "").strip()
+        if not underlying or not market:
+            continue
+        rows.append({
+            "cedear_ticker": ticker,
+            "cedear_byma_symbol": str(position.get("cedear_byma_symbol") or ticker).strip().upper(),
+            "underlying_ticker": underlying,
+            "underlying_market": market,
+            "instrument_type": position.get("instrument_type"),
+            "ratio": position.get("ratio"),
+            "mandate_exception": bool(position.get("mandate_exception", False)),
+            "byma_tradable": bool(position.get("byma_tradable", True)),
+        })
+    return pd.DataFrame(rows)
 
 
 def augment_symbol_map_with_current_holdings(
@@ -19,9 +48,12 @@ def augment_symbol_map_with_current_holdings(
 ) -> tuple[pd.DataFrame, dict]:
     """Guarantee market-data coverage for current holdings without changing Research eligibility.
 
-    The Research universe and the market-data universe have different responsibilities:
-    a current holding may be quarantined from new Research eligibility while still requiring
-    price history/correlations for portfolio risk and diversification calculations.
+    Resolution order for holdings absent from the Research symbol map:
+    1. any matching row in the hydrated master universe, including Research-ineligible rows;
+    2. explicit market-data identity embedded in the canonical portfolio snapshot.
+
+    Missing identity is a hard failure. This keeps the risk layer fail-closed without
+    re-admitting quarantined holdings into Research or guessing provider symbols.
     """
     base = symbol_map.copy()
     if not portfolio_state_path:
@@ -40,13 +72,25 @@ def augment_symbol_map_with_current_holdings(
     if not missing:
         return base, {"current_holding_count": len(holdings), "holding_rows_added": 0, "missing_holdings": []}
 
-    source = eligible_universe_frame(load_universe_json(universe_input_path)).copy()
+    payload = load_universe_json(universe_input_path)
+    source = pd.DataFrame(payload.get("rows", []))
+    if "cedear_ticker" not in source.columns:
+        source = pd.DataFrame(columns=["cedear_ticker"])
     source["cedear_ticker"] = source["cedear_ticker"].astype(str).str.strip().str.upper()
     holding_source = source[source["cedear_ticker"].isin(missing)].copy()
     found = set(holding_source["cedear_ticker"])
+
+    unresolved = set(missing) - found
+    portfolio_source = _current_holding_identity_rows(portfolio, unresolved)
+    if not portfolio_source.empty:
+        holding_source = pd.concat([holding_source, portfolio_source], ignore_index=True, sort=False)
+        found.update(portfolio_source["cedear_ticker"].astype(str).str.upper())
+
     unresolved = sorted(set(missing) - found)
     if unresolved:
-        raise ValueError("current holdings missing from hydrated universe input: " + ", ".join(unresolved))
+        raise ValueError(
+            "current holdings missing canonical market-data identity: " + ", ".join(unresolved)
+        )
 
     additions = build_symbol_map(holding_source, load_alias_config(aliases_path))
     additions["market_data_scope_reason"] = "CURRENT_PORTFOLIO_HOLDING"
