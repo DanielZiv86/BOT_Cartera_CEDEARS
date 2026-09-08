@@ -2,9 +2,6 @@ name: Build Market Feature Engine
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build Underlying Historical Price Layer"]
-    types: [completed]
   push:
     paths:
       - "src/features/**"
@@ -18,54 +15,27 @@ permissions:
 
 jobs:
   build-market-features:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run unit tests
-        run: pytest -q tests/test_market_features.py
-
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_market_features.py
       - name: Download latest underlying history artifact
         run: |
-          RUN_ID=$(gh run list \
-            --workflow underlying_history.yml \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful underlying history workflow run found"
-            exit 2
-          fi
-          echo "Using underlying history workflow run: $RUN_ID"
+          RUN_ID=$(gh run list --workflow underlying_history.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
           mkdir -p data/upstream_history
-          gh run download "$RUN_ID" \
-            --name underlying-history-layer \
-            --dir data/upstream_history
+          gh run download "$RUN_ID" --name underlying-history-layer --dir data/upstream_history
           test -f data/upstream_history/underlying_history.parquet
-
       - name: Build Market Feature Engine
-        run: |
-          python -m src.orchestration.build_market_features \
-            --history data/upstream_history/underlying_history.parquet \
-            --output-dir data/canonical/features
-
-      - name: Upload market feature artifacts
-        uses: actions/upload-artifact@v4
+        run: python -m src.orchestration.build_market_features --history data/upstream_history/underlying_history.parquet --output-dir data/canonical/features
+      - uses: actions/upload-artifact@v4
         with:
           name: market-feature-engine
           path: |
