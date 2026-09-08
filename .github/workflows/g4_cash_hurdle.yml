@@ -1,8 +1,7 @@
 name: Build Valuation G4 Cash Hurdle
 
-# G4 is deliberately a separate workflow boundary.  Keep the exact upstream
-# valuation run immutable: an automatic invocation must consume the valuation
-# run that triggered it, never "latest successful".
+# Automatic contract: every successful canonical Valuation run must create an
+# exact-lineage G4 run. workflow_dispatch remains diagnostic only.
 on:
   workflow_run:
     workflows:
