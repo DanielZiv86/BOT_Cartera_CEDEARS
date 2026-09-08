@@ -57,6 +57,7 @@ def main() -> None:
         "ranking_count": int(ranked["rank"].notna().sum()),
         "ranking_status": "RANKING_COMPLETE" if integrity["status"] == "PASS" else "RANKING_INVALID",
         "research_integrity_gate": integrity["status"],
+        "deployment_ineligible_count": int((~ranked.get("deployment_eligibility", pd.Series(True, index=ranked.index))).sum()),
     })
     reconciliation = {
         "universe_input": len(ranked),
