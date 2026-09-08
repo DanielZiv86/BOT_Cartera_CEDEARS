@@ -16,7 +16,7 @@
     {"cedear_ticker":"RTX","nominales":42,"weight":0.03416471010394554,"value_usd_approx":1677.042067534428},
     {"cedear_ticker":"SPGI","nominales":233,"weight":0.04653254012421411,"value_usd_approx":2284.141356976671},
     {"cedear_ticker":"VEA","nominales":278,"weight":0.04166634273869264,"value_usd_approx":2045.274476513865},
-    {"cedear_ticker":"VIG","nominales":722,"weight":0.09110205056101592,"value_usd_approx":4471.923536439665},
+    {"cedear_ticker":"VIG","nominales":722,"weight":0.09110205056101592,"value_usd_approx":4471.923536439665,"underlying_ticker":"VIG","underlying_market":"NYSE ARCA","instrument_type":"ETF tradicional","cedear_byma_symbol":"VIG","market_data_identity_provenance":"CURRENT_PORTFOLIO_CANONICAL_IDENTITY"},
     {"cedear_ticker":"XLV","nominales":564,"weight":0.06776987219988945,"value_usd_approx":3326.61761931711}
   ],
   "source": "Shadow_CEDEAR_20260904_2048_RS1_0.xlsx / Excel maestro v13",
