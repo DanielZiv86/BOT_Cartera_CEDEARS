@@ -58,13 +58,24 @@ def main():
     eligible_legacy=set(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).tolist())
     missing_mandate_exceptions=sorted(set(mandate_exception_tickers)-eligible_legacy)
 
+    # Reconcile the historical screening denominator explicitly. The source baseline can be
+    # larger than the active Research universe because explicit user mandate exclusions are
+    # intentional, auditable removals. New force-inclusions are reported separately so they do
+    # not distort the baseline 316 -> active denominator reconciliation.
+    baseline_eligible_count=int(payload.get("Eligible_Count") or len(source))
+    baseline_post_mandate_count=baseline_eligible_count-len(exclusion_set)
+    eligible_new_override_count=int(eligible.get("legacy_cedear_ticker",pd.Series(dtype=str)).astype(str).str.upper().isin(set(included)).sum())
+    canonical_baseline_equivalent_count=int(len(eligible))-eligible_new_override_count
+    baseline_reconciliation_delta=canonical_baseline_equivalent_count-baseline_post_mandate_count
+    baseline_reconciliation_status="PASS" if baseline_reconciliation_delta==0 else "FAIL"
+
     # Unresolved baseline rows are diagnostic/quarantine items, not automatically gate blockers.
     # A row absent from the current official catalog must not be allowed to freeze the whole
     # current universe merely because an older baseline labelled it eligible. Mandate exceptions
     # remain explicitly eligible and are separately enforced by missing_mandate_exceptions.
     mandate_mask=unresolved.get("mandate_exception",pd.Series(False,index=unresolved.index)).eq(True)
     blocking_unresolved=unresolved[unresolved["eligible_for_research"].eq(True) & ~mandate_mask].copy()
-    gate_ok=symbol_map_ok and blocking_unresolved.empty and not missing_mandate_exceptions
+    gate_ok=symbol_map_ok and blocking_unresolved.empty and not missing_mandate_exceptions and baseline_reconciliation_status=="PASS"
 
     out=Path(args.output_dir); out.mkdir(parents=True,exist_ok=True)
     eligible.to_parquet(out/"cedear_universe_master.parquet",index=False); eligible.to_json(out/"cedear_universe_master.json",orient="records",indent=2,force_ascii=False)
@@ -72,8 +83,8 @@ def main():
     unresolved.to_json(out/"cedear_official_reconciliation_unresolved.json",orient="records",indent=2,force_ascii=False)
     blocking_unresolved.to_json(out/"cedear_official_reconciliation_blocking.json",orient="records",indent=2,force_ascii=False)
     symbol_map.to_parquet(out/"security_symbol_map.parquet",index=False); symbol_map.to_json(out/"security_symbol_map.json",orient="records",indent=2,force_ascii=False)
-    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"official_reconciliation_blocking_count":int(len(blocking_unresolved)),"official_reconciliation_blocking_legacy_tickers":sorted(blocking_unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"universe_override_overlaid_count":len(overlaid),"universe_override_overlaid_tickers":sorted(overlaid),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
+    manifest={"source_version":payload.get("version"),"declared_universe_count":payload.get("Universe_Count"),"source_declared_eligible_count":payload.get("Eligible_Count"),"baseline_eligible_count":baseline_eligible_count,"baseline_mandate_excluded_count":len(exclusion_set),"baseline_mandate_excluded_tickers":sorted(exclusion_set),"baseline_post_mandate_count":baseline_post_mandate_count,"eligible_new_override_count":eligible_new_override_count,"canonical_baseline_equivalent_count":canonical_baseline_equivalent_count,"baseline_reconciliation_delta":baseline_reconciliation_delta,"baseline_reconciliation_status":baseline_reconciliation_status,"official_sources_verified_at":audit.verified_at,"comafi_official_program_count":int(len(audit.comafi)),"byma_pdf_token_count":int(len(audit.byma_symbols)),"official_reconciliation_unresolved_count":int(len(unresolved)),"official_reconciliation_unresolved_legacy_tickers":sorted(unresolved["legacy_cedear_ticker"].astype(str).tolist()),"official_reconciliation_blocking_count":int(len(blocking_unresolved)),"official_reconciliation_blocking_legacy_tickers":sorted(blocking_unresolved["legacy_cedear_ticker"].astype(str).tolist()),"user_mandate_excluded_count":len(exclusion_set),"universe_override_included_count":len(included),"universe_override_overlaid_count":len(overlaid),"universe_override_overlaid_tickers":sorted(overlaid),"canonical_eligible_count":int(len(eligible)),"symbol_map_count":int(len(symbol_map)),"universe_gate_status":"PASS" if gate_ok else "FAIL","mandate_exceptions_expected":mandate_exception_tickers,"mandate_exceptions_missing":missing_mandate_exceptions,"mandate_exceptions":eligible.loc[eligible["mandate_exception"]==True,"cedear_ticker"].tolist() if "mandate_exception" in eligible.columns else []}
     (out/"universe_manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8"); print(json.dumps(manifest,indent=2,ensure_ascii=False))
     if not gate_ok:
-        raise SystemExit(f"UNIVERSE_GATE_FAILED: blocking_unresolved={len(blocking_unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
+        raise SystemExit(f"UNIVERSE_GATE_FAILED: baseline_reconciliation={baseline_reconciliation_status} delta={baseline_reconciliation_delta} blocking_unresolved={len(blocking_unresolved)} missing_mandate_exceptions={missing_mandate_exceptions} symbol_map_ok={symbol_map_ok}")
 if __name__=="__main__": main()
