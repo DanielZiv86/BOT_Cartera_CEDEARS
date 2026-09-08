@@ -63,4 +63,20 @@ def test_equal_inputs_use_ticker_as_stable_tiebreaker():
     assert ranked.iloc[0]["cedear_ticker"] == "AAA"
 
 
+def test_explicit_non_tradable_name_remains_ranked_but_is_replaced_in_deployable_top_n():
+    screening = pd.DataFrame({
+        "cedear_ticker": ["IWDA", "AAA", "BBB"],
+        "screening_score": [99.0, 90.0, 80.0],
+        "screening_status": ["SCORE_READY"] * 3,
+        "data_quality_score": [100.0] * 3,
+        "byma_tradable": [False, True, True],
+    })
+    ranked = build_ranking(screening, top_n=2)
+    iwda = ranked.loc[ranked["cedear_ticker"] == "IWDA"].iloc[0]
+    assert iwda["rank"] == 1
+    assert not bool(iwda["top_n_eligibility"])
+    assert not bool(iwda["selected"])
+    assert ranked.loc[ranked["selected"], "cedear_ticker"].tolist() == ["AAA", "BBB"]
+
+
 # This file is also a controlled trigger surface for a fresh certified Research -> Valuation -> G4 chain.
