@@ -1,4 +1,4 @@
-mapping_version: "1.0"
+mapping_version: "1.1"
 
 providers:
   yahoo:
@@ -8,6 +8,7 @@ providers:
     AKO.B: AKO-B
     VIST US: VIST
     IWDA: IWDA.L
+    IWDA LN: IWDA.L
   stooq:
     BRK/B: BRK-B.US
     BRK.B: BRK-B.US
@@ -15,6 +16,7 @@ providers:
     AKO.B: AKO-B.US
     VIST US: VIST.US
     IWDA: IWDA.UK
+    IWDA LN: IWDA.UK
   finnhub:
     BRK/B: BRK.B
     BRKB: BRK.B
