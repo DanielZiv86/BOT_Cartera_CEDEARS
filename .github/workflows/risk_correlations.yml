@@ -2,9 +2,6 @@ name: Build Risk and Correlation Engine
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build Underlying Historical Price Layer"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -12,54 +9,27 @@ permissions:
 
 jobs:
   build-risk-correlations:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run unit tests
-        run: pytest -q tests/test_risk_engine.py
-
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_risk_engine.py
       - name: Download latest underlying history artifact
         run: |
-          RUN_ID=$(gh run list \
-            --workflow underlying_history.yml \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful underlying history workflow run found"
-            exit 2
-          fi
+          RUN_ID=$(gh run list --workflow underlying_history.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
           mkdir -p data/upstream_history
-          gh run download "$RUN_ID" \
-            --name underlying-history-layer \
-            --dir data/upstream_history
+          gh run download "$RUN_ID" --name underlying-history-layer --dir data/upstream_history
           test -f data/upstream_history/underlying_history.parquet
-
       - name: Build Risk and Correlation Engine
-        run: |
-          python -m src.orchestration.build_risk_correlations \
-            --history data/upstream_history/underlying_history.parquet \
-            --benchmark SPY \
-            --output-dir data/canonical/risk
-
-      - name: Upload risk artifacts
-        uses: actions/upload-artifact@v4
+        run: python -m src.orchestration.build_risk_correlations --history data/upstream_history/underlying_history.parquet --benchmark SPY --output-dir data/canonical/risk
+      - uses: actions/upload-artifact@v4
         with:
           name: risk-correlation-engine
           path: |
