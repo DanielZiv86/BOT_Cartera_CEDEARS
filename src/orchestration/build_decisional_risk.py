@@ -29,9 +29,13 @@ def main() -> None:
     if manifest.get("ticker_count") != 30 or manifest.get("evaluated_count") != 30 or manifest.get("blocked_count") != 0:
         blockers.append("G4_CONTRACT_NOT_COMPLETE")
     if manifest.get("ranking_status") != "COMPLETE_ACTIONABLE": blockers.append("G4_RANKING_NOT_COMPLETE_ACTIONABLE")
-    if pmanifest.get("portfolio_state_validation",{}).get("status") not in {"VALIDATED","PASS"}: blockers.append("PORTFOLIO_STATE_NOT_VALIDATED")
-    portfolio_risk = pmanifest.get("portfolio_risk",{})
-    if portfolio_risk.get("status") != "PORTFOLIO_RISK_READY": blockers.append("PORTFOLIO_RISK_NOT_READY")
+
+    portfolio_validation = pmanifest.get("portfolio_state_validation", {})
+    if portfolio_validation.get("portfolio_state_status") != "PORTFOLIO_STATE_VALIDATED":
+        blockers.append("PORTFOLIO_STATE_NOT_VALIDATED")
+    portfolio_risk = pmanifest.get("portfolio_risk", {})
+    if portfolio_risk.get("portfolio_risk_status") != "PORTFOLIO_RISK_READY":
+        blockers.append("PORTFOLIO_RISK_NOT_READY")
 
     g4_decision = manifest.get("deployment_decision")
     cash_status = manifest.get("cash_optimality_status")
@@ -42,9 +46,10 @@ def main() -> None:
         deployment = "NO_NEW_DEPLOYMENT" if g4_decision == "NO_NEW_DEPLOYMENT" or cash_status == "CASH_OPTIMAL_BY_MODEL" else "G4_CANDIDATES_MAY_PROCEED"
 
     payload = {
-        "layer":"DECISIONAL_RISK","methodology_version":"RISK-DECISIONAL-1.0","created_at":datetime.now(timezone.utc).isoformat(),
+        "layer":"DECISIONAL_RISK","methodology_version":"RISK-DECISIONAL-1.1","created_at":datetime.now(timezone.utc).isoformat(),
         "risk_status":risk_status,"risk_veto":veto,"deployment_decision":deployment,"blockers":blockers,
         "g4_contract":{"ticker_count":manifest.get("ticker_count"),"evaluated_count":manifest.get("evaluated_count"),"blocked_count":manifest.get("blocked_count"),"pass_count":manifest.get("pass_count"),"fail_count":manifest.get("fail_count"),"cash_optimality_status":cash_status,"deployment_decision":g4_decision},
+        "portfolio_state_validation": portfolio_validation,
         "portfolio_risk":portfolio_risk,"position_count":int(len(positions)),
         "principle":"Risk does not manufacture deployment. A valid G4 NO_NEW_DEPLOYMENT is preserved unless data/risk blockers require a stronger veto."
     }
