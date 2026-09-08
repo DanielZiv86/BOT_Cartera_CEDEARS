@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Build fail-closed decisional Risk gate from exact G4 lineage")
+    p.add_argument("--g4-dir", required=True)
+    p.add_argument("--portfolio-dir", required=True)
+    p.add_argument("--output-dir", default="data/canonical/decisional_risk")
+    p.add_argument("--risk-run-id", required=True, type=int)
+    args = p.parse_args()
+
+    g4 = Path(args.g4_dir); portfolio = Path(args.portfolio_dir); out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
+    lineage = json.loads((g4 / "e2e_lineage.json").read_text())
+    manifest = json.loads((g4 / "g4_manifest.json").read_text())
+    positions = pd.read_parquet(portfolio / "portfolio_positions.parquet")
+    pmanifest = json.loads((portfolio / "portfolio_state_manifest.json").read_text())
+
+    required_lineage = ["e2e_run_id","research_run_id","universe_run_id","valuation_run_id","local_market_run_id","portfolio_run_id","g4_run_id"]
+    missing = [k for k in required_lineage if not lineage.get(k)]
+    blockers = []
+    if missing: blockers.append("INCOMPLETE_LINEAGE:" + ",".join(missing))
+    if manifest.get("ticker_count") != 30 or manifest.get("evaluated_count") != 30 or manifest.get("blocked_count") != 0:
+        blockers.append("G4_CONTRACT_NOT_COMPLETE")
+    if manifest.get("ranking_status") != "COMPLETE_ACTIONABLE": blockers.append("G4_RANKING_NOT_COMPLETE_ACTIONABLE")
+    if pmanifest.get("portfolio_state_validation",{}).get("status") not in {"VALIDATED","PASS"}: blockers.append("PORTFOLIO_STATE_NOT_VALIDATED")
+    portfolio_risk = pmanifest.get("portfolio_risk",{})
+    if portfolio_risk.get("status") != "PORTFOLIO_RISK_READY": blockers.append("PORTFOLIO_RISK_NOT_READY")
+
+    g4_decision = manifest.get("deployment_decision")
+    cash_status = manifest.get("cash_optimality_status")
+    if blockers:
+        risk_status, veto, deployment = "BLOCKED", "YES", "NO_NEW_DEPLOYMENT"
+    else:
+        risk_status, veto = "PASS", "NO"
+        deployment = "NO_NEW_DEPLOYMENT" if g4_decision == "NO_NEW_DEPLOYMENT" or cash_status == "CASH_OPTIMAL_BY_MODEL" else "G4_CANDIDATES_MAY_PROCEED"
+
+    payload = {
+        "layer":"DECISIONAL_RISK","methodology_version":"RISK-DECISIONAL-1.0","created_at":datetime.now(timezone.utc).isoformat(),
+        "risk_status":risk_status,"risk_veto":veto,"deployment_decision":deployment,"blockers":blockers,
+        "g4_contract":{"ticker_count":manifest.get("ticker_count"),"evaluated_count":manifest.get("evaluated_count"),"blocked_count":manifest.get("blocked_count"),"pass_count":manifest.get("pass_count"),"fail_count":manifest.get("fail_count"),"cash_optimality_status":cash_status,"deployment_decision":g4_decision},
+        "portfolio_risk":portfolio_risk,"position_count":int(len(positions)),
+        "principle":"Risk does not manufacture deployment. A valid G4 NO_NEW_DEPLOYMENT is preserved unless data/risk blockers require a stronger veto."
+    }
+    (out/"decisional_risk.json").write_text(json.dumps(payload,indent=2,ensure_ascii=False))
+    lineage["decisional_risk_run_id"] = args.risk_run_id
+    lineage["decisional_risk_status"] = risk_status
+    lineage["decisional_risk_veto"] = veto
+    (out/"e2e_lineage.json").write_text(json.dumps(lineage,indent=2,ensure_ascii=False))
+    print(json.dumps(payload,indent=2,ensure_ascii=False))
+    if blockers: raise SystemExit("Decisional Risk blocked: " + ";".join(blockers))
+
+if __name__ == "__main__": main()
