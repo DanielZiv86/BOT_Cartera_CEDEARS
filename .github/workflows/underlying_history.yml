@@ -11,6 +11,7 @@ on:
     paths:
       - "src/market_data/history_layer.py"
       - "src/orchestration/build_underlying_history.py"
+      - "data/input/portfolio_state_*.json"
       - "tests/test_underlying_history.py"
       - ".github/workflows/underlying_history.yml"
 
@@ -64,8 +65,24 @@ jobs:
         run: |
           python -m src.orchestration.build_underlying_history \
             --symbol-map data/upstream_universe/security_symbol_map.json \
+            --portfolio-state data/input/portfolio_state_baseline_20260904.json \
+            --universe-input data/input/CEDEAR_Universe_Master_v2.json \
+            --aliases config/symbol_aliases.yml \
             --output-dir data/canonical/market_data \
             --max-workers 12
+
+      - name: Verify every current holding has usable history
+        run: |
+          python - <<'PY'
+          import json, pandas as pd
+          p=json.load(open('data/input/portfolio_state_baseline_20260904.json'))
+          holdings={str(x['cedear_ticker']).upper() for x in p['positions'] if float(x.get('weight',0))>0}
+          s=pd.read_parquet('data/canonical/market_data/underlying_history_status.parquet')
+          usable=set(s.loc[s['history_status'].isin(['HISTORY_READY','SHORT_HISTORY_BY_AGE']),'cedear_ticker'].astype(str).str.upper())
+          missing=sorted(holdings-usable)
+          assert not missing, f'CURRENT_HOLDING_HISTORY_BLOCKED: {missing}'
+          print('CURRENT_HOLDING_HISTORY_READY', sorted(holdings))
+          PY
 
       - name: Upload underlying history artifacts
         uses: actions/upload-artifact@v4

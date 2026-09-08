@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.portfolio.state import validate_portfolio_state
+from src.risk.portfolio_fit import calculate_portfolio_fit
 from src.risk.portfolio_risk import calculate_portfolio_risk
 
 
@@ -55,3 +56,23 @@ def test_portfolio_risk_uses_total_nav_weights_not_risky_sleeve_weights():
     assert abs(contribution["risk_contribution_pct"].sum() - 1.0) < 1e-9
     assert abs(sector_exp["weight"].sum() - 1.0) < 1e-12
     assert abs(factor_exp["weight"].sum() - 1.0) < 1e-12
+
+
+def test_portfolio_fit_ready_only_with_full_risky_sleeve_correlation_coverage():
+    positions = pd.DataFrame([
+        {"cedear_ticker": "AAA", "weight": 0.10},
+        {"cedear_ticker": "BBB", "weight": 0.30},
+    ])
+    complete = pd.DataFrame([
+        {"ticker_a": "CCC", "ticker_b": "AAA", "correlation": 0.20},
+        {"ticker_a": "CCC", "ticker_b": "BBB", "correlation": 0.40},
+    ])
+    ready, metrics = calculate_portfolio_fit(complete, positions, candidates=["CCC"])
+    assert ready.iloc[0]["portfolio_fit_status"] == "PORTFOLIO_FIT_QUANT_READY"
+    assert abs(float(ready.iloc[0]["portfolio_weight_covered"]) - 1.0) < 1e-12
+    assert metrics["ready_count"] == 1
+
+    partial = complete[complete["ticker_b"] == "BBB"].copy()
+    result, metrics = calculate_portfolio_fit(partial, positions, candidates=["CCC"])
+    assert result.iloc[0]["portfolio_fit_status"] == "PORTFOLIO_FIT_QUANT_PARTIAL"
+    assert metrics["ready_count"] == 0
