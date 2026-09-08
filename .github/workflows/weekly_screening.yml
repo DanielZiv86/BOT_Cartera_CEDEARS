@@ -2,9 +2,6 @@ name: Build Research MVP Screening
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build Market Feature Engine"]
-    types: [completed]
   push:
     paths:
       - "src/research/**"
@@ -18,7 +15,6 @@ permissions:
 
 jobs:
   weekly-screening:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
@@ -29,41 +25,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Research v1 unit tests
-        run: pytest -q tests/test_research_screening.py
-      - name: Download canonical universe
+      - run: pytest -q tests/test_research_screening.py
+      - name: Download serialized upstreams
         run: |
-          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN_ID" && test "$RUN_ID" != "null"
-          mkdir -p data/upstream_universe
-          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
-          test -f data/upstream_universe/cedear_universe_master.parquet
-          test -f data/upstream_universe/universe_manifest.json
-      - name: Download market features
-        run: |
-          RUN_ID=$(gh run list --workflow market_features.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN_ID" && test "$RUN_ID" != "null"
-          mkdir -p data/upstream_features
-          gh run download "$RUN_ID" --name market-feature-engine --dir data/upstream_features
-          test -f data/upstream_features/market_features.parquet
+          U=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U"
+          F=$(gh run list --workflow market_features.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F"
+          mkdir -p data/upstream_universe data/upstream_features
+          gh run download "$U" --name canonical-universe --dir data/upstream_universe
+          gh run download "$F" --name market-feature-engine --dir data/upstream_features
       - name: Build and certify Research MVP v1.0
         run: |
           EXPECTED=$(python -c "import json; print(json.load(open('data/upstream_universe/universe_manifest.json'))['canonical_eligible_count'])")
-          echo "Canonical mandate universe expected: $EXPECTED"
-          python -m src.orchestration.build_research_screening \
-            --universe data/upstream_universe/cedear_universe_master.parquet \
-            --features data/upstream_features/market_features.parquet \
-            --top-n 30 --expected-count "$EXPECTED" --min-top-data-quality 60 \
-            --output-dir data/canonical/research
-      - name: Upload Research v1 audit artifacts
-        uses: actions/upload-artifact@v4
+          python -m src.orchestration.build_research_screening --universe data/upstream_universe/cedear_universe_master.parquet --features data/upstream_features/market_features.parquet --top-n 30 --expected-count "$EXPECTED" --min-top-data-quality 60 --output-dir data/canonical/research
+      - uses: actions/upload-artifact@v4
         with:
           name: research-mvp-screening
-          path: |
-            data/canonical/research/research_screening.json
-            data/canonical/research/research_screening.parquet
-            data/canonical/research/research_screening_metrics.json
-            data/canonical/research/research_integrity.json
-            data/canonical/research/research_reconciliation.json
+          path: data/canonical/research/
           if-no-files-found: error
           retention-days: 90
