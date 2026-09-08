@@ -64,13 +64,18 @@ def test_equal_inputs_use_ticker_as_stable_tiebreaker():
 
 
 def test_explicit_non_tradable_name_remains_ranked_but_is_replaced_in_deployable_top_n():
-    screening = pd.DataFrame({
+    universe = pd.DataFrame({
         "cedear_ticker": ["IWDA", "AAA", "BBB"],
-        "screening_score": [99.0, 90.0, 80.0],
-        "screening_status": ["SCORE_READY"] * 3,
-        "data_quality_score": [100.0] * 3,
+        "instrument_type": ["ETF", "EQUITY", "EQUITY"],
         "byma_tradable": [False, True, True],
     })
+    features = pd.DataFrame({
+        "cedear_ticker": ["IWDA", "AAA", "BBB"],
+        "last_price": [130, 120, 110], "ma200": [100, 100, 100],
+        "momentum_6m": [0.3, 0.2, 0.1], "momentum_3m": [0.3, 0.2, 0.1],
+        "volatility_63d": [0.1, 0.2, 0.3], "max_drawdown": [-0.05, -0.10, -0.20],
+    })
+    screening, _ = build_screening_scores(universe, features)
     ranked = build_ranking(screening, top_n=2)
     iwda = ranked.loc[ranked["cedear_ticker"] == "IWDA"].iloc[0]
     assert iwda["rank"] == 1
