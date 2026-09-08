@@ -61,3 +61,6 @@ def test_equal_inputs_use_ticker_as_stable_tiebreaker():
     screening, _ = build_screening_scores(universe, features)
     ranked = build_ranking(screening, top_n=1)
     assert ranked.iloc[0]["cedear_ticker"] == "AAA"
+
+
+# This file is also a controlled trigger surface for a fresh certified Research -> Valuation -> G4 chain.
