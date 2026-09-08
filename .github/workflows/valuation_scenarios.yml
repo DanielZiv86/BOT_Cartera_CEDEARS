@@ -12,7 +12,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 jobs:
   build-valuation-scenarios:
@@ -151,3 +151,8 @@ jobs:
             data/canonical/valuation/e2e_lineage.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Dispatch G4 with this exact successful Valuation run
+        run: |
+          echo "Dispatching G4 for immutable valuation_run_id=${GITHUB_RUN_ID}"
+          gh workflow run g4_cash_hurdle.yml --ref "${GITHUB_REF_NAME}" -f valuation_run_id="${GITHUB_RUN_ID}"
