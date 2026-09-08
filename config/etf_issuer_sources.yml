@@ -1,4 +1,4 @@
-version: ETF-SOURCES-1.2
+version: ETF-SOURCES-1.3
 secondary_template: "https://stockanalysis.com/etf/{ticker}/holdings/"
 sources:
   ARKK:
@@ -41,7 +41,8 @@ sources:
   IWM:
     primary: {provider: iShares, mode: ishares_csv, url: "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"}
   IWDA:
-    primary: {provider: BlackRock / iShares UCITS, mode: ishares_ucits_html, url: "https://www.ishares.com/uk/professionals/en/products/251882/ishares-msci-world-ucits-etf-acc-", max_age_days: 10, max_holdings_to_analyze: 120}
+    primary: {provider: BlackRock / iShares UCITS, mode: ishares_ucits_html, url: "https://www.ishares.com/uk/individual/en/products/251882/ishares-msci-world-ucits-etf-acc-fund?locale=en_GB&siteEntryPassthrough=true", max_age_days: 10, max_holdings_to_analyze: 120}
+    secondary: {provider: BlackRock / iShares UCITS, mode: ishares_ucits_html, url: "https://www.ishares.com/uk/professionals/en/products/251882/ishares-msci-world-ucits-etf-acc-fund?siteEntryPassthrough=true&switchLocale=y", max_age_days: 10, max_holdings_to_analyze: 120}
 
   SPY:
     primary: {provider: State Street, mode: html_table, url: "https://www.ssga.com/us/en/intermediary/etfs/state-street-spdr-sp-500-etf-trust-spy"}
@@ -86,7 +87,6 @@ secondary_fallback_tickers:
   - ITA
   - IVE
   - IVW
-  - IWDA
   - IWM
   - QQQ
   - RSP
