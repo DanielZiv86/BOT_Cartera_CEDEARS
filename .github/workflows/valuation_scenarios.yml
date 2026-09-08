@@ -34,14 +34,25 @@ jobs:
           gh run download "$R" --name research-mvp-screening --dir data/upstream_research
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
           gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
-      - name: Certify Research and immutable Top-N
+      - name: Certify Research and immutable deployment-qualified Top-N
         run: |
           python - <<'PY'
           import json,os,pandas as pd
           integ=json.load(open('data/upstream_research/research_integrity.json')); assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
           r=pd.read_parquet('data/upstream_research/research_screening.parquet'); u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet'); um=json.load(open('data/upstream_universe/universe_manifest.json')); expected=int(um['canonical_eligible_count']); assert expected==304 and len(r)==expected and len(u)==expected
-          top=r.sort_values('rank').head(30); out=u[u.cedear_ticker.astype(str).str.upper().isin(set(top.cedear_ticker.astype(str).str.upper()))].copy(); assert len(out)==30; out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
-          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':top.cedear_ticker.astype(str).tolist()},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
+          # Research ranks all 304 names, including mandate exceptions such as IWDA.
+          # Downstream Valuation/G4 must consume the explicit deployment-qualified
+          # selection, not blindly the first 30 universal ranks.
+          assert 'selected' in r.columns and 'top_n_eligibility' in r.columns
+          selected=r.loc[r['selected'].fillna(False).astype(bool)].sort_values('rank').copy()
+          assert len(selected)==30, {'selected_count':len(selected)}
+          assert selected['top_n_eligibility'].fillna(False).astype(bool).all()
+          top=selected
+          tickers=top.cedear_ticker.astype(str).str.upper().tolist()
+          assert len(set(tickers))==30
+          out=u[u.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(out)==30
+          out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
+          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
           PY
       - name: Build Deep Research valuation
         run: |
