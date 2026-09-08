@@ -2,157 +2,61 @@ name: Build Canonical Valuation Scenarios
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build Research MVP Screening", "Build CEDEAR Local Market Layer"]
-    types: [completed]
 
 concurrency:
   group: valuation-scenarios-main
   cancel-in-progress: true
-
 permissions:
   contents: read
   actions: write
-
 jobs:
   build-valuation-scenarios:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
       FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-      E2E_RUN_ID: ${{ github.event_name == 'workflow_run' && format('E2E-UPSTREAM-{0}', github.event.workflow_run.id) || format('E2E-MANUAL-{0}', github.run_id) }}
-
+      E2E_RUN_ID: E2E-MANUAL-${{ github.run_id }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run valuation unit tests
-        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
-
-      - name: Resolve and download certified Research upstream
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
+      - name: Resolve serialized certified upstreams
         run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.name }}" = "Build Research MVP Screening" ]; then
-            RESEARCH_RUN_ID="${{ github.event.workflow_run.id }}"
-            RESEARCH_COMMIT="${{ github.event.workflow_run.head_sha }}"
-          else
-            RESEARCH_META=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId,headSha --jq '.[0]')
-            RESEARCH_RUN_ID=$(echo "$RESEARCH_META" | python -c 'import json,sys; print(json.load(sys.stdin)["databaseId"])')
-            RESEARCH_COMMIT=$(echo "$RESEARCH_META" | python -c 'import json,sys; print(json.load(sys.stdin)["headSha"])')
-          fi
-          test -n "$RESEARCH_RUN_ID" && test "$RESEARCH_RUN_ID" != "null"
-          test -n "$RESEARCH_COMMIT" && test "$RESEARCH_COMMIT" != "null"
-          echo "RESEARCH_RUN_ID=$RESEARCH_RUN_ID" >> "$GITHUB_ENV"
-          echo "RESEARCH_COMMIT=$RESEARCH_COMMIT" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_research
-          gh run download "$RESEARCH_RUN_ID" --name research-mvp-screening --dir data/upstream_research
+          R=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId,headSha --jq '.[0].databaseId'); U=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); L=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); P=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); Q=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          for X in "$R" "$U" "$L" "$P" "$Q"; do test -n "$X" && test "$X" != null; done
+          echo "RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"; echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"; echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"; echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
+          mkdir -p data/upstream_research data/upstream_universe data/upstream_prices
+          gh run download "$R" --name research-mvp-screening --dir data/upstream_research
+          gh run download "$U" --name canonical-universe --dir data/upstream_universe
+          gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
+      - name: Certify Research and immutable Top-N
+        run: |
           python - <<'PY'
-          import json
+          import json,os,pandas as pd
+          integ=json.load(open('data/upstream_research/research_integrity.json')); assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
+          r=pd.read_parquet('data/upstream_research/research_screening.parquet'); u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet'); um=json.load(open('data/upstream_universe/universe_manifest.json')); expected=int(um['canonical_eligible_count']); assert expected==304 and len(r)==expected and len(u)==expected
+          top=r.sort_values('rank').head(30); out=u[u.cedear_ticker.astype(str).str.upper().isin(set(top.cedear_ticker.astype(str).str.upper()))].copy(); assert len(out)==30; out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
+          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':top.cedear_ticker.astype(str).tolist()},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
+          PY
+      - name: Build Deep Research valuation
+        run: |
+          python -m src.orchestration.build_valuation_scenarios --universe data/upstream_universe/research_topn_universe.parquet --underlying-prices data/upstream_prices/underlying_prices.parquet --policy config/valuation_policy.yml --etf-sources config/etf_issuer_sources.yml --non-equity-policy config/non_equity_tracker_policy.yml --output-dir data/canonical/valuation
+          python - <<'PY'
+          import json,os,pandas as pd
           from pathlib import Path
-          p=Path('data/upstream_research/research_integrity.json')
-          assert p.exists(), 'missing research_integrity.json'
-          d=json.loads(p.read_text())
-          assert d.get('status') == 'PASS', d
-          assert float(d.get('coverage_pct',0)) == 100.0, d
+          df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet'); l=json.load(open('data/upstream_universe/e2e_lineage.json')); assert len(df)==30
+          l.update({'valuation_run_id':int(os.environ['GITHUB_RUN_ID']),'price_run_id':int(os.environ['PRICE_RUN_ID']),'local_market_run_id':int(os.environ['LOCAL_RUN_ID']),'portfolio_run_id':int(os.environ['PORTFOLIO_RUN_ID']),'valuation_count':30,'triggering_workflow':'workflow_dispatch'}); Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(l,indent=2))
           PY
-
-      - name: Download canonical universe and build immutable Top-N universe
-        run: |
-          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN_ID" && test "$RUN_ID" != "null"
-          export UNIVERSE_RUN_ID="$RUN_ID"
-          echo "UNIVERSE_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_universe
-          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
-          python - <<'PY'
-          import json, os, pandas as pd
-          r=pd.read_parquet('data/upstream_research/research_screening.parquet')
-          u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet')
-          um=json.load(open('data/upstream_universe/universe_manifest.json'))
-          expected=int(um['canonical_eligible_count'])
-          assert expected > 0
-          assert len(u)==expected, (len(u), expected)
-          assert len(r)==expected and r['rank'].notna().all(), (len(r), expected)
-          top_n=min(30, expected)
-          top=r.sort_values('rank').head(top_n)
-          tickers=set(top['cedear_ticker'].astype(str).str.upper())
-          out=u[u['cedear_ticker'].astype(str).str.upper().isin(tickers)].copy()
-          assert len(out)==top_n, (len(out), top_n)
-          out.to_parquet('data/upstream_universe/research_topn_universe.parquet', index=False)
-          universe_run_id=os.environ.get('UNIVERSE_RUN_ID')
-          assert universe_run_id, 'UNIVERSE_RUN_ID missing in current step environment'
-          manifest={'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'research_commit':os.environ['RESEARCH_COMMIT'],'universe_run_id':int(universe_run_id),'canonical_eligible_universe_count':expected,'top_n':top_n,'topn_tickers':top['cedear_ticker'].astype(str).tolist()}
-          open('data/upstream_universe/e2e_lineage.json','w').write(json.dumps(manifest,indent=2))
-          PY
-
-      - name: Resolve exact analytical upstream layers
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.name }}" = "Build CEDEAR Local Market Layer" ]; then
-            LOCAL_RUN_ID="${{ github.event.workflow_run.id }}"
-          else
-            LOCAL_RUN_ID=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          fi
-          PORTFOLIO_RUN_ID=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$LOCAL_RUN_ID" && test "$LOCAL_RUN_ID" != "null"
-          test -n "$PORTFOLIO_RUN_ID" && test "$PORTFOLIO_RUN_ID" != "null"
-          echo "LOCAL_RUN_ID=$LOCAL_RUN_ID" >> "$GITHUB_ENV"
-          echo "PORTFOLIO_RUN_ID=$PORTFOLIO_RUN_ID" >> "$GITHUB_ENV"
-
-      - name: Download exact underlying prices
-        run: |
-          RUN_ID=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN_ID" && test "$RUN_ID" != "null"
-          echo "PRICE_RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_prices
-          gh run download "$RUN_ID" --name underlying-price-layer --dir data/upstream_prices
-          test -f data/upstream_prices/underlying_prices.parquet
-
-      - name: Build Deep Research valuation only for Research Top-N
-        run: |
-          python -m src.orchestration.build_valuation_scenarios \
-            --universe data/upstream_universe/research_topn_universe.parquet \
-            --underlying-prices data/upstream_prices/underlying_prices.parquet \
-            --policy config/valuation_policy.yml \
-            --etf-sources config/etf_issuer_sources.yml \
-            --non-equity-policy config/non_equity_tracker_policy.yml \
-            --output-dir data/canonical/valuation
-          python - <<'PY'
-          import json, pandas as pd
-          from pathlib import Path
-          df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet')
-          lineage=json.loads(Path('data/upstream_universe/e2e_lineage.json').read_text())
-          assert len(df)==int(lineage['top_n']), (len(df), lineage['top_n'])
-          lineage.update({
-            'valuation_run_id':int('${{ github.run_id }}'),
-            'price_run_id':int('${{ env.PRICE_RUN_ID }}'),
-            'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),
-            'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),
-            'valuation_count':len(df),
-            'triggering_workflow':'${{ github.event.workflow_run.name }}' if '${{ github.event_name }}' == 'workflow_run' else 'workflow_dispatch'
-          })
-          Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(lineage,indent=2))
-          PY
-
-      - name: Upload valuation artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: canonical-valuation-scenarios
-          path: |
-            data/canonical/valuation/valuation_scenarios.json
-            data/canonical/valuation/valuation_scenarios.parquet
-            data/canonical/valuation/valuation_scenarios_metrics.json
-            data/canonical/valuation/e2e_lineage.json
+          path: data/canonical/valuation/
           if-no-files-found: error
           retention-days: 90
-
-      - name: Dispatch G4 with this exact successful Valuation run
-        run: |
-          echo "Dispatching G4 for immutable valuation_run_id=${GITHUB_RUN_ID}"
-          gh workflow run g4_cash_hurdle.yml --ref "${GITHUB_REF_NAME}" -f valuation_run_id="${GITHUB_RUN_ID}"
+      - name: Dispatch exact G4
+        run: gh workflow run g4_cash_hurdle.yml --ref "${GITHUB_REF_NAME}" -f valuation_run_id="${GITHUB_RUN_ID}"
