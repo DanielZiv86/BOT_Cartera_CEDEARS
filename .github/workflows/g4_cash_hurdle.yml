@@ -1,14 +1,14 @@
 name: Build Valuation G4 Cash Hurdle
 
-# Automatic contract: every successful canonical Valuation run must create an
-# exact-lineage G4 run. workflow_dispatch remains diagnostic only.
+# Deterministic handoff contract: Valuation explicitly dispatches this workflow
+# with its immutable run id. This avoids GitHub's workflow_run chain-depth limit.
 on:
-  workflow_run:
-    workflows:
-      - Build Canonical Valuation Scenarios
-    types:
-      - completed
   workflow_dispatch:
+    inputs:
+      valuation_run_id:
+        description: Exact successful Build Canonical Valuation Scenarios run id
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +16,6 @@ permissions:
 
 jobs:
   build-g4:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
@@ -31,16 +30,13 @@ jobs:
       - name: Run G4 unit tests
         run: pytest -q tests/test_g4_cash_hurdle.py
 
-      - name: Download exact triggering valuation artifact
+      - name: Download exact dispatched valuation artifact
         run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            VAL_RUN_ID="${{ github.event.workflow_run.id }}"
-            test "${{ github.event.workflow_run.name }}" = "Build Canonical Valuation Scenarios"
-            test "${{ github.event.workflow_run.conclusion }}" = "success"
-          else
-            VAL_RUN_ID=$(gh run list --workflow valuation_scenarios.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          fi
+          VAL_RUN_ID="${{ inputs.valuation_run_id }}"
           test -n "$VAL_RUN_ID" && test "$VAL_RUN_ID" != "null"
+          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId)
+          test "$(echo "$META" | python -c 'import json,sys; print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios"
+          test "$(echo "$META" | python -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')" = "success"
           echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_valuation
           gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
@@ -125,7 +121,7 @@ jobs:
           assert manifest.get('ticker_count') == 30, manifest
           assert manifest.get('evaluated_count') == 30, manifest
           assert manifest.get('blocked_count') == 0, manifest
-          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30})
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'handoff':'VALUATION_EXACT_RUN_DISPATCH'})
           Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
 
