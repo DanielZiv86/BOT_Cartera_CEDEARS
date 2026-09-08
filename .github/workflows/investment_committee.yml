@@ -1,0 +1,70 @@
+name: Build Investment Committee Decision
+
+on:
+  workflow_dispatch:
+    inputs:
+      risk_run_id:
+        required: true
+        type: string
+      g4_run_id:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  committee:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Download exact Risk and G4 artifacts
+        run: |
+          R="${{ inputs.risk_run_id }}"; G="${{ inputs.g4_run_id }}"
+          RM=$(gh run view "$R" --json workflowName,conclusion); GM=$(gh run view "$G" --json workflowName,conclusion)
+          test "$(echo "$RM"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Decisional Risk Gate"
+          test "$(echo "$RM"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
+          test "$(echo "$GM"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Valuation G4 Cash Hurdle"
+          test "$(echo "$GM"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
+          mkdir -p data/upstream_risk data/upstream_g4
+          gh run download "$R" --name decisional-risk-gate --dir data/upstream_risk
+          gh run download "$G" --name valuation-g4-cash-hurdle --dir data/upstream_g4
+          python - <<'PY'
+          import json
+          r=json.load(open('data/upstream_risk/e2e_lineage.json')); g=json.load(open('data/upstream_g4/e2e_lineage.json'))
+          assert r['decisional_risk_run_id']==int('${{ inputs.risk_run_id }}'),r
+          assert r['g4_run_id']==int('${{ inputs.g4_run_id }}')==g['g4_run_id'],(r,g)
+          assert r['e2e_run_id']==g['e2e_run_id'] and r['research_run_id']==g['research_run_id'] and r['valuation_run_id']==g['valuation_run_id'],(r,g)
+          PY
+      - name: Build Committee decision and persist Shadow Book
+        run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee
+      - name: Final E2E certification contract
+        run: |
+          python - <<'PY'
+          import json
+          c=json.load(open('data/canonical/committee/committee_decision.json')); l=json.load(open('data/canonical/committee/e2e_lineage.json')); s=json.load(open('data/canonical/committee/shadow_book.json'))
+          assert l['canonical_eligible_universe_count']==304,l
+          assert l['research_run_id']==34230494077,l
+          assert l['valuation_run_id']==34230567350,l
+          assert l['g4_run_id']==34230925668,l
+          assert l['decision_persisted'] is True,l
+          assert c['fabricated_trade_count']==0,c
+          assert s['order_count']==0 if c['decision']=='HOLD_CASH_NO_ACTION' else True
+          print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'lineage':l},indent=2))
+          PY
+      - name: Upload Committee and final lineage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: investment-committee-decision
+          path: |
+            data/canonical/committee/committee_decision.json
+            data/canonical/committee/shadow_book.json
+            data/canonical/committee/e2e_lineage.json
+          if-no-files-found: error
