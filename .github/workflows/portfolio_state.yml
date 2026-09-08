@@ -68,6 +68,19 @@ jobs:
             --classification config/portfolio_classification.yml \
             --output-dir data/canonical/portfolio
 
+      - name: Enforce quantitative Portfolio Fit contract
+        run: |
+          python - <<'PY'
+          import json, pandas as pd
+          manifest=json.load(open('data/canonical/portfolio/portfolio_state_manifest.json'))
+          assert manifest['portfolio_risk']['portfolio_risk_status']=='PORTFOLIO_RISK_READY', manifest['portfolio_risk']
+          fit=pd.read_parquet('data/canonical/portfolio/portfolio_fit_quantitative.parquet')
+          bad=fit.loc[fit['portfolio_fit_status']!='PORTFOLIO_FIT_QUANT_READY',['cedear_ticker','portfolio_fit_status','portfolio_weight_covered']]
+          assert bad.empty, 'PORTFOLIO_FIT_NOT_FULLY_READY: '+bad.to_json(orient='records')
+          assert (fit['portfolio_weight_covered'] >= 0.95).all()
+          print(f'PORTFOLIO_FIT_QUANT_READY {len(fit)}/{len(fit)}')
+          PY
+
       - name: Upload portfolio state artifacts
         uses: actions/upload-artifact@v4
         with:
