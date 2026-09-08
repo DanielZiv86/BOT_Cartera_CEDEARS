@@ -2,12 +2,6 @@ name: Build Risk and Correlation Engine
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "src/risk/**"
-      - "src/orchestration/build_risk_correlations.py"
-      - "tests/test_risk_engine.py"
-      - ".github/workflows/risk_correlations.yml"
   workflow_run:
     workflows: ["Build Underlying Historical Price Layer"]
     types: [completed]
