@@ -35,8 +35,14 @@ jobs:
           import json
           d=json.load(open('data/upstream_g4/e2e_lineage.json')); m=json.load(open('data/upstream_g4/g4_manifest.json'))
           assert d['g4_run_id']==int('${{ inputs.g4_run_id }}'),d
-          assert d['research_run_id']==34230494077,d
-          assert d['valuation_run_id']==34230567350,d
+          # Generic immutable-lineage contract: Risk must accept the exact Research/Valuation
+          # carried by this G4, not historical run IDs from a previous certification.
+          for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'):
+              assert int(d.get(k,0)) > 0, (k,d)
+          assert int(d['canonical_eligible_universe_count']) == 304,d
+          assert int(d['valuation_count']) == 30,d
+          assert int(d['g4_candidate_count']) == 30,d
+          assert d.get('handoff') == 'VALUATION_EXACT_RUN_DISPATCH',d
           assert m['ticker_count']==30 and m['evaluated_count']==30 and m['blocked_count']==0,m
           PY
       - name: Download exact portfolio pinned by G4 lineage
