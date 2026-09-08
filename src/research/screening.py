@@ -5,8 +5,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-# Universal market-data factors available for every instrument class.  Missing
-# observations are handled explicitly; they never silently remove a CEDEAR.
 COMPONENTS = {
     "momentum_6m": (True, 0.25),
     "trend_vs_ma200": (True, 0.20),
@@ -40,14 +38,7 @@ def _instrument_model(row: pd.Series) -> str:
 
 
 def build_screening_scores(universe: pd.DataFrame, features: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Produce one auditable screening decision for every canonical CEDEAR.
-
-    Research v1.0 separates lack of evidence from investment quality. Available
-    factors are cross-sectionally scored. Missing factors receive a neutral 50th
-    percentile contribution and reduce Data Quality, which creates an explicit
-    uncertainty penalty.  Thus no score is fabricated from a missing observation,
-    while every valid canonical instrument remains comparable and rankable.
-    """
+    """Produce one auditable screening decision for every canonical CEDEAR."""
     if universe.empty:
         raise ValueError("canonical universe is empty")
     if "cedear_ticker" not in universe.columns:
@@ -61,8 +52,6 @@ def build_screening_scores(universe: pd.DataFrame, features: pd.DataFrame) -> tu
         dup = sorted(canonical.loc[canonical["cedear_ticker"].duplicated(False), "cedear_ticker"].unique())
         raise ValueError("canonical universe contains duplicate tickers: " + ", ".join(dup))
 
-    # A completely unavailable feature layer is a structural failure. Partial
-    # coverage is an instrument-level condition and is handled below.
     if features is None or features.empty or "cedear_ticker" not in features.columns:
         raise ValueError("market features layer is empty or invalid")
     feature_frame = features.copy()
@@ -70,6 +59,8 @@ def build_screening_scores(universe: pd.DataFrame, features: pd.DataFrame) -> tu
     feature_frame = feature_frame.drop_duplicates("cedear_ticker", keep="last")
     keep = ["cedear_ticker", "as_of_date", "feature_status", "last_price", "ma200", *[c for c in COMPONENTS if c not in {"trend_vs_ma200"}]]
     keep = [c for c in dict.fromkeys(keep) if c in feature_frame.columns]
+    # Canonical is intentionally the left side so mandate/deployment metadata
+    # (e.g. byma_tradable, legacy_cedear_ticker) survives into ranking.
     result = canonical.merge(feature_frame[keep], on="cedear_ticker", how="left", validate="one_to_one")
 
     for col in ("last_price", "ma200", "momentum_6m", "volatility_63d", "max_drawdown", "momentum_3m"):
@@ -114,7 +105,7 @@ def build_screening_scores(universe: pd.DataFrame, features: pd.DataFrame) -> tu
     total = len(result)
     metrics: dict[str, Any] = {
         "engine": "RESEARCH_UNIVERSAL_SCREENING",
-        "engine_version": "1.0.0",
+        "engine_version": "1.0.1",
         "ticker_count": int(total),
         "score_ready_count": int(result["screening_score"].notna().sum()),
         "blocked_by_data_count": 0,
