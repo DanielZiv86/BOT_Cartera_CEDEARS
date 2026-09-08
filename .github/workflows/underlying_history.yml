@@ -2,9 +2,6 @@ name: Build Underlying Historical Price Layer
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build Underlying Price Layer"]
-    types: [completed]
   schedule:
     - cron: "0 23 * * 1-5"
   push:
@@ -21,56 +18,27 @@ permissions:
 
 jobs:
   build-underlying-history:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run unit tests
-        run: pytest -q tests/test_underlying_history.py tests/test_underlying_prices.py tests/test_universe.py
-
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_underlying_history.py tests/test_underlying_prices.py tests/test_universe.py
       - name: Download latest canonical security symbol map
         run: |
-          RUN_ID=$(gh run list \
-            --workflow build_universe.yml \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful Build Universe workflow run found"
-            exit 2
-          fi
-          echo "Using canonical universe workflow run: $RUN_ID"
+          RUN_ID=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" && test "$RUN_ID" != "null"
           mkdir -p data/upstream_universe
-          gh run download "$RUN_ID" \
-            --name canonical-universe \
-            --dir data/upstream_universe
+          gh run download "$RUN_ID" --name canonical-universe --dir data/upstream_universe
           test -f data/upstream_universe/security_symbol_map.json
-
       - name: Build Underlying Historical Price Layer
         run: |
-          python -m src.orchestration.build_underlying_history \
-            --symbol-map data/upstream_universe/security_symbol_map.json \
-            --portfolio-state data/input/portfolio_state_baseline_20260904.json \
-            --universe-input data/input/CEDEAR_Universe_Master_v2.json \
-            --aliases config/symbol_aliases.yml \
-            --output-dir data/canonical/market_data \
-            --max-workers 12
-
+          python -m src.orchestration.build_underlying_history --symbol-map data/upstream_universe/security_symbol_map.json --portfolio-state data/input/portfolio_state_baseline_20260904.json --universe-input data/input/CEDEAR_Universe_Master_v2.json --aliases config/symbol_aliases.yml --output-dir data/canonical/market_data --max-workers 12
       - name: Verify every current holding has usable history
         run: |
           python - <<'PY'
@@ -79,13 +47,10 @@ jobs:
           holdings={str(x['cedear_ticker']).upper() for x in p['positions'] if float(x.get('weight',0))>0}
           s=pd.read_parquet('data/canonical/market_data/underlying_history_status.parquet')
           usable=set(s.loc[s['history_status'].isin(['HISTORY_READY','SHORT_HISTORY_BY_AGE']),'cedear_ticker'].astype(str).str.upper())
-          missing=sorted(holdings-usable)
-          assert not missing, f'CURRENT_HOLDING_HISTORY_BLOCKED: {missing}'
+          missing=sorted(holdings-usable); assert not missing, f'CURRENT_HOLDING_HISTORY_BLOCKED: {missing}'
           print('CURRENT_HOLDING_HISTORY_READY', sorted(holdings))
           PY
-
-      - name: Upload underlying history artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: underlying-history-layer
           path: |
