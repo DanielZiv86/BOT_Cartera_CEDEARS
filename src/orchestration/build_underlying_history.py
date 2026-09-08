@@ -7,11 +7,69 @@ from pathlib import Path
 import pandas as pd
 
 from src.market_data.history_layer import build_underlying_history
+from src.universe.loader import eligible_universe_frame, load_universe_json
+from src.universe.symbol_map import build_symbol_map, load_alias_config
+
+
+def augment_symbol_map_with_current_holdings(
+    symbol_map: pd.DataFrame,
+    portfolio_state_path: str | None,
+    universe_input_path: str | None,
+    aliases_path: str,
+) -> tuple[pd.DataFrame, dict]:
+    """Guarantee market-data coverage for current holdings without changing Research eligibility.
+
+    The Research universe and the market-data universe have different responsibilities:
+    a current holding may be quarantined from new Research eligibility while still requiring
+    price history/correlations for portfolio risk and diversification calculations.
+    """
+    base = symbol_map.copy()
+    if not portfolio_state_path:
+        return base, {"current_holding_count": 0, "holding_rows_added": 0, "missing_holdings": []}
+    if not universe_input_path:
+        raise ValueError("--universe-input is required when --portfolio-state is supplied")
+
+    portfolio = json.loads(Path(portfolio_state_path).read_text(encoding="utf-8"))
+    holdings = sorted({
+        str(row.get("cedear_ticker") or "").strip().upper()
+        for row in portfolio.get("positions", [])
+        if float(row.get("weight") or 0.0) > 0 and str(row.get("cedear_ticker") or "").strip()
+    })
+    existing = set(base["cedear_ticker"].astype(str).str.strip().str.upper())
+    missing = [ticker for ticker in holdings if ticker not in existing]
+    if not missing:
+        return base, {"current_holding_count": len(holdings), "holding_rows_added": 0, "missing_holdings": []}
+
+    source = eligible_universe_frame(load_universe_json(universe_input_path)).copy()
+    source["cedear_ticker"] = source["cedear_ticker"].astype(str).str.strip().str.upper()
+    holding_source = source[source["cedear_ticker"].isin(missing)].copy()
+    found = set(holding_source["cedear_ticker"])
+    unresolved = sorted(set(missing) - found)
+    if unresolved:
+        raise ValueError("current holdings missing from hydrated universe input: " + ", ".join(unresolved))
+
+    additions = build_symbol_map(holding_source, load_alias_config(aliases_path))
+    additions["market_data_scope_reason"] = "CURRENT_PORTFOLIO_HOLDING"
+    if "market_data_scope_reason" not in base.columns:
+        base["market_data_scope_reason"] = "RESEARCH_ELIGIBLE"
+    combined = pd.concat([base, additions], ignore_index=True)
+    combined["cedear_ticker"] = combined["cedear_ticker"].astype(str).str.strip().str.upper()
+    if combined["cedear_ticker"].duplicated().any():
+        duplicates = sorted(combined.loc[combined["cedear_ticker"].duplicated(False), "cedear_ticker"].unique())
+        raise ValueError("duplicate symbols after current-holding augmentation: " + ", ".join(duplicates))
+    return combined.sort_values("cedear_ticker").reset_index(drop=True), {
+        "current_holding_count": len(holdings),
+        "holding_rows_added": len(additions),
+        "missing_holdings": missing,
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build canonical underlying historical price layer")
     parser.add_argument("--symbol-map", required=True)
+    parser.add_argument("--portfolio-state")
+    parser.add_argument("--universe-input")
+    parser.add_argument("--aliases", default="config/symbol_aliases.yml")
     parser.add_argument("--output-dir", default="data/canonical/market_data")
     parser.add_argument("--max-workers", type=int, default=12)
     args = parser.parse_args()
@@ -24,7 +82,14 @@ def main() -> None:
     if missing:
         raise SystemExit("security_symbol_map missing columns: " + ", ".join(missing))
 
+    symbol_map, scope_metrics = augment_symbol_map_with_current_holdings(
+        symbol_map=symbol_map,
+        portfolio_state_path=args.portfolio_state,
+        universe_input_path=args.universe_input,
+        aliases_path=args.aliases,
+    )
     history, status, metrics = build_underlying_history(symbol_map, max_workers=args.max_workers)
+    metrics["market_data_scope"] = scope_metrics
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
