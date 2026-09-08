@@ -1,0 +1,122 @@
+name: Certify Autonomous CEDEAR E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: cedear-certified-e2e
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create immutable E2E identity
+        id: e2e
+        run: |
+          echo "e2e_run_id=E2E-CERT-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "E2E_CERT_ROOT=${GITHUB_RUN_ID}"
+
+      - name: Dispatch root Universe exactly once
+        run: |
+          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run build_universe.yml --ref main
+          sleep 3
+          U=$(gh run list --workflow build_universe.yml --event workflow_dispatch --branch main --limit 10 --json databaseId,createdAt,headSha,status --jq '[.[] | select(.createdAt >= "'"$BEFORE"'")][0].databaseId')
+          test -n "$U" && test "$U" != "null"
+          echo "$U" > universe_run_id.txt
+          echo "UNIVERSE_RUN_ID=$U"
+          gh run watch "$U" --exit-status
+
+      - name: Wait for the autonomous chain through Research
+        run: |
+          # Universe success must autonomously create Price -> History -> Market Features -> Research.
+          # Poll for a successful Research newer than this certification root and fail closed on timeout.
+          ROOT_CREATED=$(gh run view "$GITHUB_RUN_ID" --json createdAt --jq .createdAt)
+          R=""
+          for i in $(seq 1 90); do
+            R=$(gh run list --workflow weekly_screening.yml --branch main --limit 20 --json databaseId,createdAt,conclusion,status,event --jq '[.[] | select(.createdAt >= "'"$ROOT_CREATED"'" and .event=="workflow_run")][0].databaseId // empty')
+            if [ -n "$R" ]; then
+              STATUS=$(gh run view "$R" --json status --jq .status)
+              if [ "$STATUS" = "completed" ]; then gh run watch "$R" --exit-status; break; fi
+            fi
+            sleep 20
+          done
+          test -n "$R"
+          echo "$R" > research_run_id.txt
+
+      - name: Wait for Valuation then exact G4 -> Risk -> Committee handoffs
+        run: |
+          R=$(cat research_run_id.txt)
+          RC=$(gh run view "$R" --json createdAt --jq .createdAt)
+          wait_new_success () {
+            WF="$1"; EVENT="$2"; AFTER="$3"; OUT="$4"
+            ID=""
+            for i in $(seq 1 90); do
+              ID=$(gh run list --workflow "$WF" --branch main --limit 20 --json databaseId,createdAt,status,conclusion,event --jq '[.[] | select(.createdAt >= "'"$AFTER"'" and .event=="'"$EVENT"'")][0].databaseId // empty')
+              if [ -n "$ID" ]; then
+                S=$(gh run view "$ID" --json status --jq .status)
+                if [ "$S" = "completed" ]; then gh run watch "$ID" --exit-status; echo "$ID" > "$OUT"; return 0; fi
+              fi
+              sleep 20
+            done
+            return 1
+          }
+          wait_new_success valuation_scenarios.yml workflow_run "$RC" valuation_run_id.txt
+          V=$(cat valuation_run_id.txt); VC=$(gh run view "$V" --json createdAt --jq .createdAt)
+          wait_new_success g4_cash_hurdle.yml workflow_dispatch "$VC" g4_run_id.txt
+          G=$(cat g4_run_id.txt); GC=$(gh run view "$G" --json createdAt --jq .createdAt)
+          wait_new_success decisional_risk.yml workflow_dispatch "$GC" risk_run_id.txt
+          D=$(cat risk_run_id.txt); DC=$(gh run view "$D" --json createdAt --jq .createdAt)
+          wait_new_success investment_committee.yml workflow_dispatch "$DC" committee_run_id.txt
+
+      - name: Download final Committee artifact and certify full lineage
+        run: |
+          U=$(cat universe_run_id.txt); R=$(cat research_run_id.txt); V=$(cat valuation_run_id.txt); G=$(cat g4_run_id.txt); D=$(cat risk_run_id.txt); C=$(cat committee_run_id.txt)
+          mkdir -p final
+          gh run download "$C" --name investment-committee-decision --dir final
+          python - "$U" "$R" "$V" "$G" "$D" "$C" <<'PY'
+          import json,sys
+          u,r,v,g,d,c=map(int,sys.argv[1:])
+          l=json.load(open('final/e2e_lineage.json'))
+          dec=json.load(open('final/committee_decision.json'))
+          shadow=json.load(open('final/shadow_book.json'))
+          assert l['universe_run_id']==u,(l,u)
+          assert l['research_run_id']==r,(l,r)
+          assert l['valuation_run_id']==v,(l,v)
+          assert l['g4_run_id']==g,(l,g)
+          assert l['decisional_risk_run_id']==d,(l,d)
+          assert l['committee_run_id']==c,(l,c)
+          assert l['canonical_eligible_universe_count']==304,l
+          assert l['decisional_risk_status']=='PASS',l
+          assert l['decision_persisted'] is True,l
+          assert dec['fabricated_trade_count']==0,dec
+          assert shadow['status'] in ('NO_ACTION_PERSISTED','ACTION_PERSISTED'),shadow
+          print(json.dumps({'AUTONOMOUS_E2E':'PASS','root_run_id':int('${{ github.run_id }}'),'lineage':l,'decision':dec['decision']},indent=2))
+          PY
+
+      - name: Persist autonomous certification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomous-e2e-certification
+          path: |
+            universe_run_id.txt
+            research_run_id.txt
+            valuation_run_id.txt
+            g4_run_id.txt
+            risk_run_id.txt
+            committee_run_id.txt
+            final/e2e_lineage.json
+            final/committee_decision.json
+            final/shadow_book.json
+          if-no-files-found: error
+          retention-days: 90
