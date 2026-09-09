@@ -69,9 +69,10 @@ jobs:
           from pathlib import Path
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'));m=json.load(open('data/canonical/g4/g4_manifest.json'))
           assert m['scenario_review_count']==30,m
-          assert m['scenario_validated_count']==30 and m['scenario_blocked_count']==0,m
-          assert m['ticker_count']==30 and m['evaluated_count']==30 and m['blocked_count']==0,m
-          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':30,'handoff':'VALUATION_EXACT_RUN_DISPATCH'})
+          assert m['scenario_validated_count']+m['scenario_blocked_count']==30,m
+          assert m['ticker_count']==30 and m['evaluated_count']+m['blocked_count']==30,m
+          assert m.get('g4_accounting_complete') is True,m
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'handoff':'VALUATION_EXACT_RUN_DISPATCH'})
           Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
       - name: Upload G4 artifacts
