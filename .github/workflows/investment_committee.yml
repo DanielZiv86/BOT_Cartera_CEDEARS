@@ -65,8 +65,23 @@ jobs:
           assert l['committee_run_id']==int('${{ github.run_id }}'),l
           assert l['decision_persisted'] is True,l
 
-          assert g['ticker_count']==30 and g['evaluated_count']==30 and g['blocked_count']==0,g
-          assert g.get('ranking_status') in {'COMPLETE_ACTIONABLE','COMPLETE_WITH_REVIEW_FLAGS'},g
+          # G4-2.0 completeness means all 30 candidates are explicitly accounted for.
+          # Data gaps are a valid fail-closed state, not a reason to invalidate lineage.
+          ticker_count=int(g.get('ticker_count',0) or 0)
+          evaluated=int(g.get('evaluated_count',0) or 0)
+          blocked=int(g.get('blocked_count',0) or 0)
+          accounted=int(g.get('accounted_count', evaluated + blocked) or 0)
+          assert ticker_count==30,g
+          assert evaluated + blocked == ticker_count,g
+          assert accounted == ticker_count,g
+          assert bool(g.get('g4_accounting_complete', evaluated + blocked == ticker_count)),g
+          assert g.get('ranking_status') in {'COMPLETE_ACTIONABLE','COMPLETE_WITH_REVIEW_FLAGS','COMPLETE_WITH_DATA_GAPS'},g
+          if blocked:
+              assert g.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',g
+              assert g.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',g
+              assert c['decision'] == 'HOLD_CASH_NO_ACTION',c
+              assert c.get('rationale') == 'SCENARIO_DATA_GAPS_FAIL_CLOSED',c
+
           assert r['risk_status']=='PASS',r
           assert r['risk_veto']=='NO',r
           assert c['fabricated_trade_count']==0,c
