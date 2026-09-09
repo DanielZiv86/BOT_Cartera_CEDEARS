@@ -1,8 +1,20 @@
-methodology_version: SCENARIO-1.0
+methodology_version: SCENARIO-2.0
 horizon_months: 12
 
-# Fundamental equity scenarios are deliberately independent from analyst-low downside.
-equity:
+identity:
+  eps_pe_to_price_ratio_min: 0.55
+  eps_pe_to_price_ratio_max: 1.80
+
+# Explicit overrides are auditable and only used where provider sector metadata may be absent.
+sector_overrides:
+  MFG: FINANCIALS
+  MUFG: FINANCIALS
+  NMR: FINANCIALS
+  RDS: ENERGY
+  SHEL: ENERGY
+  PBR: ENERGY
+
+corporate:
   base_growth_floor: -0.10
   base_growth_cap: 0.20
   base_pe_floor: 6.0
@@ -21,6 +33,30 @@ equity:
   bull_multiple_factor: 1.12
   bull_pe_cap: 30.0
 
+financials:
+  roe_floor: 0.04
+  roe_cap: 0.22
+  cost_of_equity_anchor: 0.10
+  base_pb_anchor: 1.0
+  roe_pb_sensitivity: 3.0
+  base_pb_floor: 0.45
+  base_pb_cap: 2.20
+  consensus_base_blend: 0.20
+  bear_pb_factor: 0.72
+  bear_pb_floor: 0.35
+  bull_pb_factor: 1.20
+  bull_pb_cap: 2.75
+
+energy:
+  base_pe_floor: 5.0
+  base_pe_cap: 14.0
+  earnings_weight: 0.65
+  normalized_fcf_yield: 0.08
+  consensus_base_blend: 0.15
+  bear_cycle_factor: 0.72
+  bull_cycle_factor: 1.28
+  dividend_credit: 0.50
+
 consensus:
   dispersion_review_threshold: 0.75
   high_distance_from_median_cap: 0.50
@@ -36,10 +72,13 @@ probabilities:
   dispersion_bull_penalty_max: 0.07
 
 policy_notes:
+  - Economic identity is a hard precondition: underlying security, EPS unit and target-price unit must be coherent before scenario validation.
+  - EPS x P/E must reconcile to the market price within a bounded sanity interval; a likely ADR/share/unit mismatch fails closed.
+  - Financials use P/B and ROE; conventional corporate Debt/Equity is explicitly excluded from their scenario stress.
+  - Energy uses normalized earnings plus FCF evidence when available, cycle stress and dividend support.
+  - Other corporates retain EPS/growth/multiple logic with bounded leverage stress.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Bear is generated from stressed earnings and a compressed multiple; analyst low never defines it.
-  - Base is primarily fundamental, with only a bounded 20% consensus-median blend.
-  - Bull is capped by fundamental plausibility and winsorised consensus evidence before expected return.
-  - Probabilities are dynamic and confidence/dispersion-aware rather than fixed 25/50/25.
-  - Missing material fundamental evidence fails closed as SCENARIO_NOT_VALIDATED.
-  - Expected return must be calculated only after this review.
+  - Bear is independent of analyst low. Bull remains plausibility-capped and consensus high is winsorised.
+  - Probabilities remain dynamic and confidence/dispersion-aware.
+  - Missing material evidence for the selected sector model fails closed; no fallback fabricates a scenario.
+  - Expected return is calculated only after scenario review.
