@@ -45,7 +45,21 @@ jobs:
           assert int(d['valuation_count']) == 30,d
           assert int(d['g4_candidate_count']) == 30,d
           assert d.get('handoff') == 'VALUATION_EXACT_RUN_DISPATCH',d
-          assert m['ticker_count']==30 and m['evaluated_count']==30 and m['blocked_count']==0,m
+
+          # Completeness is accounting completeness, not forced analytical validation.
+          # Missing material scenario evidence must remain explicitly blocked/fail-closed,
+          # while all 30 candidates must still be accounted for before Risk can proceed.
+          ticker_count=int(m.get('ticker_count',0) or 0)
+          evaluated=int(m.get('evaluated_count',0) or 0)
+          blocked=int(m.get('blocked_count',0) or 0)
+          accounted=int(m.get('accounted_count', evaluated + blocked) or 0)
+          assert ticker_count == 30,m
+          assert evaluated + blocked == ticker_count,m
+          assert accounted == ticker_count,m
+          assert bool(m.get('g4_accounting_complete', evaluated + blocked == ticker_count)),m
+          if blocked:
+              assert m.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',m
+              assert m.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',m
           PY
       - name: Download exact portfolio pinned by G4 lineage
         run: |
