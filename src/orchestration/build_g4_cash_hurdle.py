@@ -33,6 +33,11 @@ def _govern(m):
     return x
 
 
+# Stable public-within-module contracts retained for tests and downstream callers.
+def _apply_global_governance(metrics):
+    return _govern(metrics)
+
+
 def _dynamic_equity_margin(result,reviewed,raw_policy):
     if result.empty:return result
     cfg=raw_policy.get('dynamic_equity_margin',{}) or {}; base=float(cfg.get('base_equity_risk_buffer',.015)); unc_max=float(cfg.get('uncertainty_buffer_max',.02)); downside_max=float(cfg.get('downside_buffer_max',.015))
@@ -54,6 +59,10 @@ def _execution(result,local):
     cols=[c for c in ['cedear_ticker','execution_book_status','executable_buy_ars','ratio_status','ccl_status','market_session_status'] if c in local.columns]; lm=local[cols].drop_duplicates('cedear_ticker'); out=result.merge(lm,on='cedear_ticker',how='left',suffixes=('','_execution'))
     book=out.get('execution_book_status',pd.Series(index=out.index,dtype=object)).isin(['BOOK_EXECUTABLE_BY_SANITY','EXECUTABLE_BOOK_READY']); buy=pd.to_numeric(out.get('executable_buy_ars'),errors='coerce').gt(0); ratio=out.get('ratio_status',pd.Series(index=out.index,dtype=object)).isin(['RATIO_VALIDATED_COMAFI','RATIO_VALIDATED_CANONICAL_CCL']); ccl=out.get('ccl_status',pd.Series(index=out.index,dtype=object)).isin(['CCL_READY_VALIDATED','CCL_READY_VALIDATED_CANONICAL','CCL_WARNING_MARKET_DEVIATION'])
     out['analysis_ready']=out['g4_status'].ne('BLOCKED_BY_DATA'); out['execution_ready']=out['analysis_ready']&book&buy&ratio&ccl; out['execution_gate_status']='NOT_EXECUTION_READY'; out.loc[out['execution_ready'],'execution_gate_status']='EXECUTION_READY'; return out
+
+
+def _add_execution_gate(result, local):
+    return _execution(result, local)
 
 
 def main():
