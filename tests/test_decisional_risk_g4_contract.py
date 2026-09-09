@@ -22,19 +22,32 @@ def test_complete_with_review_flags_is_accepted_when_30_of_30_and_zero_blocked()
     )
 
 
-def test_review_flags_do_not_override_incomplete_contract():
-    assert not g4_ranking_is_risk_acceptable(
+def test_explicit_data_gap_is_accounted_but_not_silently_actionable():
+    # One candidate can be fail-closed for missing material scenario evidence
+    # without turning a complete 30-name accounting into broken lineage.
+    assert g4_ranking_is_risk_acceptable(
         _manifest(
-            ranking_status="COMPLETE_WITH_REVIEW_FLAGS",
+            ranking_status="COMPLETE_WITH_DATA_GAPS",
             evaluated_count=29,
             blocked_count=1,
         )
     )
 
 
-def test_review_required_ranking_is_not_accepted_as_actionable():
-    assert not g4_ranking_is_risk_acceptable(
+def test_review_required_ranking_is_accounted_for_risk():
+    # Review-required is a governance hold, not an incomplete lineage condition.
+    assert g4_ranking_is_risk_acceptable(
         _manifest(ranking_status="COMPLETE_REVIEW_REQUIRED")
+    )
+
+
+def test_unaccounted_candidate_remains_fail_closed():
+    assert not g4_ranking_is_risk_acceptable(
+        _manifest(
+            ranking_status="COMPLETE_WITH_DATA_GAPS",
+            evaluated_count=28,
+            blocked_count=1,
+        )
     )
 
 
