@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
+      - name: Run decisional Risk contract tests
+        run: pytest -q tests/test_decisional_risk_g4_contract.py
       - name: Download exact certified G4
         run: |
           G4_RUN_ID="${{ inputs.g4_run_id }}"
