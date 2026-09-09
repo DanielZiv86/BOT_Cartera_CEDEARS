@@ -1,4 +1,4 @@
-methodology_version: G4-1.1
+methodology_version: G4-2.0
 horizon_months: 12
 return_currency: USD_ECONOMIC_RETURN
 
@@ -7,6 +7,14 @@ cash_hurdle:
   minimum_excess_return_over_cash: 0.05
   capital_preservation_buffer: 0.03
   minimum_margin_over_hurdle: 0.02
+
+# Added on top of the base 2% margin for single-name equities. This makes the
+# required compensation candidate-specific rather than treating defensive and
+# idiosyncratic equities identically.
+dynamic_equity_margin:
+  base_equity_risk_buffer: 0.015
+  uncertainty_buffer_max: 0.020
+  downside_buffer_max: 0.015
 
 risk:
   max_bear_downside: -0.15
@@ -26,17 +34,16 @@ target_review:
   base_upside_review_threshold: 0.75
   bull_upside_review_threshold: 1.25
   high_low_dispersion_review_threshold: 1.00
-  behavior: FLAG_FOR_REVIEW_DO_NOT_OVERRIDE_G4_ECONOMIC_RESULT
+  behavior: FLAG_FOR_REVIEW_AFTER_PRE_G4_SCENARIO_VALIDATION
 
 execution:
   brokerage_rate_per_side: 0.006
   analytical_g4_is_separate_from_execution_ready: true
 
 policy_notes:
-  - Bull/Base/Bear probabilities must sum to 1.0.
-  - Missing material valuation, local-market, ratio, CCL, confidence, or portfolio-fit data blocks G4 for that ticker.
-  - Scenario returns are net of brokerage and a conservative spread assumption when a valid spread is available.
-  - G4_PASS requires NetBenefit_vs_Cash >= minimum_margin_over_hurdle and Bear_Return_Net >= max_bear_downside.
-  - A projected single-name weight above 20% is a hard G4 concentration failure.
-  - Cash optimality is NOT_DEMONSTRATED while any material universe coverage remains blocked.
-  - A G4_PASS with extreme 12m target upside or analyst high-low dispersion is marked EXTREME_TARGET_REQUIRES_REVIEW and is excluded from g4_ranked_actionable until reviewed.
+  - G4 consumes only post-review Bull/Base/Bear scenarios; expected return is recomputed after review.
+  - Missing material scenario evidence fails closed and cannot receive G4_PASS.
+  - Single-name equities require the base margin plus dynamic equity, uncertainty and downside buffers.
+  - Bear_Return_Net must remain above the portfolio preservation limit.
+  - A projected single-name weight above 20% is a hard concentration failure.
+  - Execution readiness remains separate from analytical attractiveness.
