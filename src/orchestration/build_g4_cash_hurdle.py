@@ -24,6 +24,18 @@ def _load(path):
     raise ValueError(f'Unsupported input: {p}')
 
 
+def _certified_review_metrics(reviewed):
+    validated=reviewed.get('scenario_validated',pd.Series(False,index=reviewed.index)).fillna(False).astype(bool)
+    blockers={}
+    if 'scenario_review_blockers' in reviewed.columns:
+        for raw in reviewed['scenario_review_blockers']:
+            vals=raw if isinstance(raw,list) else ([] if raw is None or (isinstance(raw,float) and pd.isna(raw)) else [str(raw)])
+            for b in vals:
+                b=str(b).strip()
+                if b: blockers[b]=blockers.get(b,0)+1
+    return {'scenario_review_count':len(reviewed),'scenario_validated_count':int(validated.sum()),'scenario_blocked_count':int((~validated).sum()),'scenario_review_complete':bool(validated.all()),'scenario_methodology_version':'SCENARIO-2.1','scenario_blocker_counts':dict(sorted(blockers.items()))}
+
+
 def _govern(m):
     x=dict(m); blocked=int(x.get('blocked_count',0) or 0); evaluated=int(x.get('evaluated_count',0) or 0); passes=int(x.get('pass_count',0) or 0); clean=int(x.get('clean_g4_pass_count',passes) or 0); review=int(x.get('extreme_target_review_required_count',0) or 0); total=int(x.get('ticker_count',0) or 0)
     accounted=(total==30 and evaluated+blocked==30)
@@ -63,9 +75,15 @@ def _add_execution_gate(result,local): return _execution(result,local)
 def main():
     p=argparse.ArgumentParser();
     for a in ('local-market','valuation-inputs','portfolio-fit','positions','policy','output-dir'):p.add_argument(f'--{a}',required=True)
-    p.add_argument('--scenario-policy',default='config/scenario_review_policy.yml');p.add_argument('--brokerage-rate',type=float,default=.006);a=p.parse_args()
+    p.add_argument('--scenario-policy',default='config/scenario_review_policy.yml');p.add_argument('--brokerage-rate',type=float,default=.006);p.add_argument('--certified-scenario-review',action='store_true');a=p.parse_args()
     local=_load(a.local_market); valuations=_load(a.valuation_inputs); fit=_load(a.portfolio_fit); positions=_load(a.positions); policy,raw=_load_policy(a.policy); scenario_policy=yaml.safe_load(Path(a.scenario_policy).read_text(encoding='utf-8')) or {}
-    reviewed,scenario_metrics=validate_scenarios(valuations,scenario_policy); invalid=~reviewed.get('scenario_validated',pd.Series(False,index=reviewed.index)).fillna(False); reviewed.loc[invalid,'valuation_status']='BLOCKED_BY_DATA'
+    if a.certified_scenario_review:
+        required={'scenario_validated','scenario_review_status','scenario_review_blockers','economic_identity_status','scenario_method'}
+        missing=required-set(valuations.columns); assert not missing, {'certified_review_missing_columns':sorted(missing)}
+        reviewed=valuations.copy(); scenario_metrics=_certified_review_metrics(reviewed)
+    else:
+        reviewed,scenario_metrics=validate_scenarios(valuations,scenario_policy)
+    invalid=~reviewed.get('scenario_validated',pd.Series(False,index=reviewed.index)).fillna(False); reviewed.loc[invalid,'valuation_status']='BLOCKED_BY_DATA'
     result,metrics=calculate_g4_cash_hurdle(local_market=local,valuation_inputs=reviewed,portfolio_fit=fit,positions=positions,policy=policy,brokerage_rate=a.brokerage_rate); result=_dynamic_equity_margin(result,reviewed,raw)
     metrics['pass_count']=int((result['g4_status']=='G4_PASS').sum()); metrics['blocked_count']=int((result['g4_status']=='BLOCKED_BY_DATA').sum()); metrics['evaluated_count']=len(result)-metrics['blocked_count']; metrics['fail_count']=metrics['evaluated_count']-metrics['pass_count']; metrics['cash_optimality_status']='NOT_DEMONSTRATED' if metrics['blocked_count'] else ('CASH_NOT_OPTIMAL_BY_MODEL' if metrics['pass_count'] else 'CASH_OPTIMAL_BY_MODEL')
     result,review_metrics=apply_extreme_target_review(result,reviewed,raw); result=_execution(result,local); metrics=_govern({**metrics,**scenario_metrics,**review_metrics}); metrics['analysis_ready_count']=int(result.get('analysis_ready',pd.Series(dtype=bool)).sum());metrics['execution_ready_count']=int(result.get('execution_ready',pd.Series(dtype=bool)).sum())
@@ -80,6 +98,6 @@ def main():
         if c in pq:pq[c]=pq[c].map(lambda x:json.dumps(x,ensure_ascii=False) if isinstance(x,list) else x)
     pq.to_parquet(out/'g4_cash_hurdle.parquet',index=False); result[result['g4_status']!='BLOCKED_BY_DATA'].sort_values('net_benefit_vs_cash',ascending=False).to_json(out/'g4_ranked_evaluated.json',orient='records',indent=2,force_ascii=False)
     actionable=result[(result['g4_status']=='G4_PASS')&(result['target_review_status']=='ACTIONABLE_IF_GLOBAL_GOVERNANCE_ALLOWS')&(result['execution_ready'])].sort_values('net_benefit_vs_cash',ascending=False); actionable.to_json(out/'g4_ranked_actionable.json',orient='records',indent=2,force_ascii=False)
-    manifest={'layer':'Deep Scenario Review + G4 Cash Hurdle','created_at':datetime.now(timezone.utc).isoformat(),'policy_file':a.policy,'scenario_policy_file':a.scenario_policy,'policy':raw,'brokerage_rate_per_side':a.brokerage_rate,**metrics,'methodology_version':'G4-2.0'};(out/'g4_manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8');print(json.dumps(manifest,indent=2));return 0
+    manifest={'layer':'Deep Scenario Review + G4 Cash Hurdle','created_at':datetime.now(timezone.utc).isoformat(),'policy_file':a.policy,'scenario_policy_file':a.scenario_policy,'policy':raw,'brokerage_rate_per_side':a.brokerage_rate,**metrics,'methodology_version':'G4-2.0','certified_scenario_review_consumed':bool(a.certified_scenario_review)};(out/'g4_manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8');print(json.dumps(manifest,indent=2));return 0
 
 if __name__=='__main__':raise SystemExit(main())
