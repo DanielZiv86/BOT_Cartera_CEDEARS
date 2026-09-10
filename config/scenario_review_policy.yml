@@ -5,7 +5,6 @@ identity:
   eps_pe_to_price_ratio_min: 0.55
   eps_pe_to_price_ratio_max: 1.80
   require_verified_normalization_when_units_differ: true
-  # Explicit issuer/SEC-verified mappings only. Never infer a ratio from prices.
   verified_adr_ratios:
     HSBC:
       ordinary_shares_per_ads: 5.0
@@ -50,6 +49,7 @@ sector_classification:
 sector_overrides:
   RDS: ENERGY
   SHEL: ENERGY
+  V: CORPORATE
 
 corporate:
   base_growth_floor: -0.10
@@ -77,14 +77,14 @@ financials:
   base_pb_anchor: 1.0
   roe_pb_sensitivity: 3.0
   base_pb_floor: 0.45
-  base_pb_cap: 2.20
+  base_pb_cap: 4.00
+  observed_pb_weight: 0.65
+  fair_pb_weight: 0.35
   consensus_base_blend: 0.20
   bear_pb_factor: 0.72
   bear_pb_floor: 0.35
   bull_pb_factor: 1.20
-  bull_pb_cap: 2.75
-  # Bull is a distinct optimistic state, not merely base P/B times a multiplier.
-  # The floor preserves Bear < Base < Bull while the existing plausibility cap remains binding.
+  bull_pb_cap: 5.00
   minimum_bull_premium_to_base: 0.10
 
 energy:
@@ -111,12 +111,14 @@ probabilities:
 
 policy_notes:
   - Economic identity is a hard precondition before scenario validation.
+  - ADR/share/FX normalization is applied to scenario fundamentals as well as identity checks; scenarios and market prices must live in the same economic unit.
   - ADR/share normalization is applied only from explicit issuer or SEC verified mappings; ratios are never reverse-engineered from prices.
   - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
   - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
   - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
   - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
-  - Financials use P/B and ROE; conventional corporate Debt/Equity is excluded from their stress model.
+  - Visa is routed to CORPORATE because its economics are payment-network/technology-like rather than bank balance-sheet economics.
+  - Financials use normalized BVPS, ROE, observed market P/B and a ROE-implied fair P/B anchor; conventional corporate Debt/Equity is excluded from their stress model.
   - Financial Bull must be strictly above Base, subject to the same external plausibility cap.
   - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
