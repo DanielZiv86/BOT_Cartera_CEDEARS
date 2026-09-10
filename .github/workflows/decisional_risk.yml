@@ -23,44 +23,28 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run decisional Risk contract tests
         run: pytest -q tests/test_decisional_risk_g4_contract.py
-      - name: Download exact certified G4
+      - name: Download exact certified G4-2.1 with Scenario V2.3 lineage
         run: |
-          G4_RUN_ID="${{ inputs.g4_run_id }}"
-          META=$(gh run view "$G4_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Valuation G4 Cash Hurdle"
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
-          mkdir -p data/upstream_g4
-          gh run download "$G4_RUN_ID" --name valuation-g4-cash-hurdle --dir data/upstream_g4
+          G4_RUN_ID="${{ inputs.g4_run_id }}";META=$(gh run view "$G4_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Valuation G4 Cash Hurdle";test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success";test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
+          mkdir -p data/upstream_g4;gh run download "$G4_RUN_ID" --name valuation-g4-cash-hurdle --dir data/upstream_g4
           python - <<'PY'
           import json
-          d=json.load(open('data/upstream_g4/e2e_lineage.json')); m=json.load(open('data/upstream_g4/g4_manifest.json'))
-          assert d['g4_run_id']==int('${{ inputs.g4_run_id }}'),d
-          for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'): assert int(d.get(k,0))>0,(k,d)
-          assert int(d.get('canonical_eligible_universe_count',0))>0,d
-          assert int(d['valuation_count'])==30 and int(d['g4_candidate_count'])==30,d
-          assert d.get('handoff')=='CERTIFIED_V2_3_SCENARIO_EXACT_RUN_DISPATCH',d
-          assert d.get('scenario_methodology_version')=='SCENARIO-2.3',d
-          assert d.get('g4_methodology_version')=='G4-2.1',d
-          assert m.get('scenario_methodology_version')=='SCENARIO-2.3',m
-          assert m.get('methodology_version')=='G4-2.1',m
-          assert int(d.get('scenario_validated_count',0))==28 and int(d.get('scenario_blocked_count',0))==2,d
-          ticker_count=int(m.get('ticker_count',0) or 0); evaluated=int(m.get('evaluated_count',0) or 0); blocked=int(m.get('blocked_count',0) or 0); accounted=int(m.get('accounted_count',evaluated+blocked) or 0)
-          assert ticker_count==30 and evaluated+blocked==ticker_count and accounted==ticker_count,m
-          assert bool(m.get('g4_accounting_complete',evaluated+blocked==ticker_count)),m
-          if blocked:
-              assert m.get('ranking_status')=='COMPLETE_WITH_DATA_GAPS',m
-              assert m.get('deployment_decision')=='NO_NEW_DEPLOYMENT_DATA_GAPS',m
+          d=json.load(open('data/upstream_g4/e2e_lineage.json'));m=json.load(open('data/upstream_g4/g4_manifest.json'));assert d['g4_run_id']==int('${{ inputs.g4_run_id }}')
+          for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'):assert int(d.get(k,0))>0,(k,d)
+          assert int(d.get('canonical_eligible_universe_count',0))>0 and int(d['valuation_count'])==30 and int(d['g4_candidate_count'])==30
+          assert d.get('handoff')=='CERTIFIED_V2_3_SCENARIO_EXACT_RUN_DISPATCH' and d.get('scenario_methodology_version')=='SCENARIO-2.3' and d.get('g4_methodology_version')=='G4-2.1'
+          assert m.get('scenario_methodology_version')=='SCENARIO-2.3' and m.get('methodology_version')=='G4-2.1';assert m.get('preservation_gate_scenario')=='STRESS' and m.get('probabilistic_bear_used_in_expected_return') is True and m.get('stress_probability_weighted') is False
+          sr=int(d.get('scenario_review_count',0));sv=int(d.get('scenario_validated_count',0));sb=int(d.get('scenario_blocked_count',0));assert sr==30 and sv+sb==30
+          ticker=int(m.get('ticker_count',0));evaluated=int(m.get('evaluated_count',0));blocked=int(m.get('blocked_count',0));assert ticker==30 and evaluated+blocked==ticker and int(m.get('accounted_count',evaluated+blocked))==ticker and bool(m.get('g4_accounting_complete',False))
+          if blocked:assert m.get('ranking_status')=='COMPLETE_WITH_DATA_GAPS' and m.get('deployment_decision')=='NO_NEW_DEPLOYMENT_DATA_GAPS'
           PY
       - name: Download exact portfolio pinned by G4 lineage
         run: |
-          P=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['portfolio_run_id'])")
-          mkdir -p data/upstream_portfolio
-          gh run download "$P" --name portfolio-state-engine --dir data/upstream_portfolio
+          P=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['portfolio_run_id'])");mkdir -p data/upstream_portfolio;gh run download "$P" --name portfolio-state-engine --dir data/upstream_portfolio
       - name: Build decisional Risk
         run: python -m src.orchestration.build_decisional_risk --g4-dir data/upstream_g4 --portfolio-dir data/upstream_portfolio --risk-run-id ${{ github.run_id }} --output-dir data/canonical/decisional_risk
-      - name: Upload decisional Risk artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: decisional-risk-gate
           path: |
