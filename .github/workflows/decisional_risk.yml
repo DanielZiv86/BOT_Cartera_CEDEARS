@@ -7,11 +7,9 @@ on:
         description: Exact successful Build Valuation G4 Cash Hurdle run id
         required: true
         type: string
-
 permissions:
   contents: read
   actions: write
-
 jobs:
   decisional-risk:
     runs-on: ubuntu-latest
@@ -38,29 +36,21 @@ jobs:
           import json
           d=json.load(open('data/upstream_g4/e2e_lineage.json')); m=json.load(open('data/upstream_g4/g4_manifest.json'))
           assert d['g4_run_id']==int('${{ inputs.g4_run_id }}'),d
-          for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'):
-              assert int(d.get(k,0)) > 0, (k,d)
-          assert int(d.get('canonical_eligible_universe_count',0)) > 0,d
-          assert int(d['valuation_count']) == 30,d
-          assert int(d['g4_candidate_count']) == 30,d
-          assert d.get('handoff') == 'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',d
-          assert d.get('scenario_methodology_version') == 'SCENARIO-2.2',d
-          assert d.get('g4_methodology_version') == 'G4-2.1',d
-          assert m.get('scenario_methodology_version') == 'SCENARIO-2.2',m
-          assert m.get('methodology_version') == 'G4-2.1',m
-          assert int(d.get('scenario_validated_count',0)) == 28,d
-          assert int(d.get('scenario_blocked_count',0)) == 2,d
-          ticker_count=int(m.get('ticker_count',0) or 0)
-          evaluated=int(m.get('evaluated_count',0) or 0)
-          blocked=int(m.get('blocked_count',0) or 0)
-          accounted=int(m.get('accounted_count', evaluated + blocked) or 0)
-          assert ticker_count == 30,m
-          assert evaluated + blocked == ticker_count,m
-          assert accounted == ticker_count,m
-          assert bool(m.get('g4_accounting_complete', evaluated + blocked == ticker_count)),m
+          for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'): assert int(d.get(k,0))>0,(k,d)
+          assert int(d.get('canonical_eligible_universe_count',0))>0,d
+          assert int(d['valuation_count'])==30 and int(d['g4_candidate_count'])==30,d
+          assert d.get('handoff')=='CERTIFIED_V2_3_SCENARIO_EXACT_RUN_DISPATCH',d
+          assert d.get('scenario_methodology_version')=='SCENARIO-2.3',d
+          assert d.get('g4_methodology_version')=='G4-2.1',d
+          assert m.get('scenario_methodology_version')=='SCENARIO-2.3',m
+          assert m.get('methodology_version')=='G4-2.1',m
+          assert int(d.get('scenario_validated_count',0))==28 and int(d.get('scenario_blocked_count',0))==2,d
+          ticker_count=int(m.get('ticker_count',0) or 0); evaluated=int(m.get('evaluated_count',0) or 0); blocked=int(m.get('blocked_count',0) or 0); accounted=int(m.get('accounted_count',evaluated+blocked) or 0)
+          assert ticker_count==30 and evaluated+blocked==ticker_count and accounted==ticker_count,m
+          assert bool(m.get('g4_accounting_complete',evaluated+blocked==ticker_count)),m
           if blocked:
-              assert m.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',m
-              assert m.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',m
+              assert m.get('ranking_status')=='COMPLETE_WITH_DATA_GAPS',m
+              assert m.get('deployment_decision')=='NO_NEW_DEPLOYMENT_DATA_GAPS',m
           PY
       - name: Download exact portfolio pinned by G4 lineage
         run: |
