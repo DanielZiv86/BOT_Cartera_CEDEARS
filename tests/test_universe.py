@@ -10,7 +10,7 @@ def _sample_payload():
     return {"version":"test-v1","Universe_Count":2,"Eligible_Count":2,"rows":[a,b]}
 
 def _geo_policy():
-    return {"allowed_us_exchanges":["NYSE","NASDAQ"],"allowed_issuer_countries":{"US":"UNITED_STATES","ES":"EUROPE","GB":"EUROPE","BR":"NOT_ALLOWED"},"mandate_exceptions":["IWDA"],"reason_codes":{"eligible":"ISSUER_US_OR_EUROPE_AND_US_TRADED","country_unknown":"ISSUER_COUNTRY_UNVERIFIED","country_outside_mandate":"ISSUER_OUTSIDE_US_EUROPE","exchange_outside_mandate":"UNDERLYING_NOT_US_TRADED","mandate_exception":"EXPLICIT_USER_MANDATE_EXCEPTION"}}
+    return {"allowed_us_exchanges":["NYSE","NASDAQ"],"allowed_issuer_countries":{"US":"UNITED_STATES","ES":"EUROPE","GB":"EUROPE"},"mandate_exceptions":["IWDA"],"reason_codes":{"eligible":"ISSUER_US_OR_EUROPE_AND_US_TRADED","country_unknown":"ISSUER_COUNTRY_UNVERIFIED","country_outside_mandate":"ISSUER_OUTSIDE_US_EUROPE","exchange_outside_mandate":"UNDERLYING_NOT_US_TRADED","mandate_exception":"EXPLICIT_USER_MANDATE_EXCEPTION"}}
 
 def test_universe_validation_passes(): assert validate_universe(_sample_payload()).is_valid
 
@@ -18,20 +18,16 @@ def test_iwda_exception_is_enforced():
     p=_sample_payload(); p["rows"][1]["mandate_exception"]=False; r=validate_universe(p); assert not r.is_valid and any("IWDA" in e for e in r.errors)
 
 def test_geography_accepts_us_and_european_issuers_trading_in_us():
-    frame=pd.DataFrame([{"cedear_ticker":"JPM","issuer_country":"US","underlying_market":"NYSE","eligible_for_research":True},{"cedear_ticker":"SAN","issuer_country":"ES","underlying_market":"NYSE","eligible_for_research":True}])
-    out=apply_geography_eligibility(frame,_geo_policy()); assert out["geography_eligible"].tolist()==[True,True]
+    frame=pd.DataFrame([{"cedear_ticker":"JPM","issuer_country":"US","underlying_market":"NYSE","eligible_for_research":True},{"cedear_ticker":"SAN","issuer_country":"ES","underlying_market":"NYSE","eligible_for_research":True}]); out=apply_geography_eligibility(frame,_geo_policy()); assert out["geography_eligible"].tolist()==[True,True]
 
 def test_geography_rejects_brazil_even_when_security_trades_in_us():
-    frame=pd.DataFrame([{"cedear_ticker":"PBR","issuer_country":"BR","underlying_market":"NYSE","eligible_for_research":True}])
-    out=apply_geography_eligibility(frame,_geo_policy()); row=out.iloc[0]; assert not bool(row["geography_eligible"]); assert row["geography_eligibility_reason"]=="ISSUER_OUTSIDE_US_EUROPE"; assert not bool(row["eligible_for_research"])
+    frame=pd.DataFrame([{"cedear_ticker":"PBR","issuer_country":"BR","underlying_market":"NYSE","eligible_for_research":True}]); out=apply_geography_eligibility(frame,_geo_policy()); row=out.iloc[0]; assert not bool(row["geography_eligible"]); assert row["geography_eligibility_reason"]=="ISSUER_OUTSIDE_US_EUROPE"; assert not bool(row["eligible_for_research"])
 
 def test_geography_fails_closed_on_unknown_country():
-    frame=pd.DataFrame([{"cedear_ticker":"XYZ","issuer_country":"","underlying_market":"NYSE","eligible_for_research":True}])
-    out=apply_geography_eligibility(frame,_geo_policy()); assert not bool(out.iloc[0]["eligible_for_research"]); assert out.iloc[0]["geography_eligibility_reason"]=="ISSUER_COUNTRY_UNVERIFIED"
+    frame=pd.DataFrame([{"cedear_ticker":"XYZ","issuer_country":"","underlying_market":"NYSE","eligible_for_research":True}]); out=apply_geography_eligibility(frame,_geo_policy()); assert not bool(out.iloc[0]["eligible_for_research"]); assert out.iloc[0]["geography_eligibility_reason"]=="ISSUER_COUNTRY_UNVERIFIED"
 
 def test_geography_preserves_iwda_explicit_exception():
-    frame=pd.DataFrame([{"cedear_ticker":"IWDA","issuer_country":"","underlying_market":"EUROCLEAR","eligible_for_research":True,"mandate_exception":True}])
-    out=apply_geography_eligibility(frame,_geo_policy()); assert bool(out.iloc[0]["eligible_for_research"]); assert out.iloc[0]["geography_eligibility_reason"]=="EXPLICIT_USER_MANDATE_EXCEPTION"
+    frame=pd.DataFrame([{"cedear_ticker":"IWDA","issuer_country":"","underlying_market":"EUROCLEAR","eligible_for_research":True,"mandate_exception":True}]); out=apply_geography_eligibility(frame,_geo_policy()); assert bool(out.iloc[0]["eligible_for_research"]); assert out.iloc[0]["geography_eligibility_reason"]=="EXPLICIT_USER_MANDATE_EXCEPTION"
 
 def test_official_reconciliation_resolves_local_symbol_distinct_from_underlying():
     source=eligible_universe_frame(_sample_payload()).iloc[[0]].copy(); comafi=pd.DataFrame([{"program_name":"Banco Bilbao","cedear_byma_symbol":"BBV","underlying_symbol":"BBVA"}]); out=reconcile_official_identity(source,OfficialUniverseAudit(comafi=comafi,byma_symbols={"BBV"},verified_at="now")); row=out.iloc[0]; assert row["cedear_byma_symbol"]=="BBV"; assert row["official_match_method"]=="MATCH_BY_UNDERLYING_SYMBOL"; assert bool(row["byma_tradable"]); assert bool(row["eligible_for_research"])
