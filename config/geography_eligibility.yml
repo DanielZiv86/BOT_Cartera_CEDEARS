@@ -3,14 +3,20 @@ policy_version: GEOGRAPHY-2.1
 # Investment mandate: the underlying security must trade in the United States and
 # the issuer must be domiciled in the United States or Europe.
 # Exchange location and issuer domicile are separate hard gates.
+# Values below include the actual labels observed in the Comafi/baseline universe.
 allowed_us_exchanges:
   - NYSE
+  - NEW YORK
   - NASDAQ
+  - NASDAQ GS
+  - NASDAQ GM
+  - NASDAQ CM
   - AMEX
   - NYSE ARCA
   - NYSEAMERICAN
   - BATS
   - CBOE
+  - CBOE BZX
 
 allowed_issuer_countries:
   US: UNITED_STATES
@@ -38,6 +44,15 @@ allowed_issuer_countries:
   HU: EUROPE
   IS: EUROPE
 
+# US-listed funds do not have a corporate issuer domicile in Comafi in the same
+# sense as equities/ADRs. They are admitted by the US-listing gate itself and
+# remain fully auditable. This avoids falsely dropping SPY/QQQ/XLE/etc. merely
+# because País de Origen is blank.
+us_listed_fund_instrument_types:
+  - ETF TRADICIONAL
+  - EXPOSICION ESPECIAL
+  - EXPOSICIÓN ESPECIAL
+
 # Explicit project mandate exception. It remains auditable and does not broaden
 # the rule for any other instrument.
 mandate_exceptions:
@@ -48,6 +63,7 @@ fail_closed_on_non_us_exchange: true
 
 reason_codes:
   eligible: ISSUER_US_OR_EUROPE_AND_US_TRADED
+  us_listed_fund: US_LISTED_FUND_VEHICLE
   country_unknown: ISSUER_COUNTRY_UNVERIFIED
   country_outside_mandate: ISSUER_OUTSIDE_US_EUROPE
   exchange_outside_mandate: UNDERLYING_NOT_US_TRADED
