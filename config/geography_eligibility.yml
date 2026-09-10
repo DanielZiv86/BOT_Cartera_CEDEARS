@@ -34,7 +34,7 @@ allowed_issuer_countries:
   AT: EUROPE
   DK: EUROPE
   SE: EUROPE
-  NO: EUROPE
+  "NO": EUROPE
   FI: EUROPE
   PT: EUROPE
   GR: EUROPE
