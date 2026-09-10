@@ -33,15 +33,19 @@ jobs:
         run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py tests/test_deep_scenario_engine.py tests/test_deep_scenario_v23.py
       - name: Resolve Research first and consume its exact pinned Universe
         run: |
-          R=$(gh run list --workflow weekly_screening.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$R" && test "$R" != null
+          # Research/Universe/Prices/Local/Portfolio are certified upstream artifacts.
+          # During feature-branch certification they may legitimately come from main,
+          # so resolve the latest successful producer run repo-wide; exact lineage is
+          # then pinned and validated below rather than assuming same-branch producers.
+          R=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$R" && test "$R" != null
           mkdir -p data/upstream_research data/upstream_universe data/upstream_prices
           gh run download "$R" --name research-mvp-screening --dir data/upstream_research
           test -f data/upstream_research/research_lineage.json
           U=$(python -c "import json; print(json.load(open('data/upstream_research/research_lineage.json'))['universe_run_id'])")
-          Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          L=$(gh run list --workflow cedear_local_market.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          P=$(gh run list --workflow portfolio_state.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          for X in "$U" "$Q" "$L" "$P"; do test -n "$X" && test "$X" != null; done
+          Q=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          L=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          P=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          for X in "$R" "$U" "$Q" "$L" "$P"; do test -n "$X" && test "$X" != null; done
           echo "RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"; echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"; echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"; echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
           gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
