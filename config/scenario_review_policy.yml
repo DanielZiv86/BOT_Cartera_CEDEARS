@@ -5,6 +5,26 @@ identity:
   eps_pe_to_price_ratio_min: 0.55
   eps_pe_to_price_ratio_max: 1.80
   require_verified_normalization_when_units_differ: true
+  # Explicit issuer/SEC-verified mappings only. Never infer a ratio from prices.
+  verified_adr_ratios:
+    HSBC:
+      ordinary_shares_per_ads: 5.0
+      source: HSBC_INVESTOR_FAQ_ADR_PROGRAM
+    RDS:
+      ordinary_shares_per_ads: 2.0
+      source: SHELL_ADS_FACILITY_OFFICIAL
+    SHEL:
+      ordinary_shares_per_ads: 2.0
+      source: SHELL_ADS_FACILITY_OFFICIAL
+    TXR:
+      ordinary_shares_per_ads: 10.0
+      source: TERNIUM_ADS_DISCLOSURE
+    TX:
+      ordinary_shares_per_ads: 10.0
+      source: TERNIUM_ADS_DISCLOSURE
+    VOD:
+      ordinary_shares_per_ads: 10.0
+      source: VODAFONE_INVESTOR_FAQ_ADR_RATIO
 
 sector_classification:
   fail_closed_when_unverified: true
@@ -27,7 +47,6 @@ sector_classification:
     - FOOD
     - BEVERAGE
 
-# Overrides remain auditable exceptions, not a substitute for official sector metadata.
 sector_overrides:
   RDS: ENERGY
   SHEL: ENERGY
@@ -64,6 +83,9 @@ financials:
   bear_pb_floor: 0.35
   bull_pb_factor: 1.20
   bull_pb_cap: 2.75
+  # Bull is a distinct optimistic state, not merely base P/B times a multiplier.
+  # The floor preserves Bear < Base < Bull while the existing plausibility cap remains binding.
+  minimum_bull_premium_to_base: 0.10
 
 energy:
   base_pe_floor: 5.0
@@ -89,11 +111,13 @@ probabilities:
 
 policy_notes:
   - Economic identity is a hard precondition before scenario validation.
-  - EPS x P/E is reconciled after explicit ADR/share and FX normalization factors when those factors are verified.
-  - A foreign/ADR unit mismatch is blocked; the engine never guesses an ADR ratio or FX conversion.
+  - ADR/share normalization is applied only from explicit issuer or SEC verified mappings; ratios are never reverse-engineered from prices.
+  - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
+  - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
   - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
   - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
   - Financials use P/B and ROE; conventional corporate Debt/Equity is excluded from their stress model.
+  - Financial Bull must be strictly above Base, subject to the same external plausibility cap.
   - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
   - Bear is independent of analyst low; Bull remains plausibility-capped.
