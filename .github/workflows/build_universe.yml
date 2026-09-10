@@ -6,11 +6,13 @@ on:
     paths:
       - "data/input/CEDEAR_Universe_Master_v2.json"
       - "src/universe/**"
+      - "src/connectors/finnhub.py"
       - "src/orchestration/build_universe.py"
       - "src/orchestration/diagnose_universe_sources.py"
       - "config/symbol_aliases.yml"
       - "config/mandate_exclusions.yml"
       - "config/universe_inclusions.yml"
+      - "config/geography_eligibility.yml"
       - "tests/test_universe.py"
       - "requirements.txt"
       - ".github/workflows/build_universe.yml"
@@ -20,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
+      FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,25 +38,28 @@ jobs:
         run: test -f data/input/CEDEAR_Universe_Master_v2.json || (echo "Missing canonical source" && exit 2)
       - name: Diagnose official sources
         run: python -m src.orchestration.diagnose_universe_sources
-      - name: Build and reconcile official universe
+      - name: Build, reconcile and geography-filter official universe
         run: |
           python -m src.orchestration.build_universe \
             --input data/input/CEDEAR_Universe_Master_v2.json \
             --aliases config/symbol_aliases.yml \
             --exclusions config/mandate_exclusions.yml \
             --inclusions config/universe_inclusions.yml \
+            --geography-policy config/geography_eligibility.yml \
             --output-dir data/canonical
-      - name: Enforce Universe Gate
+      - name: Enforce Universe V2.1 Gate
         run: |
           python - <<'PY'
           import json
           m=json.load(open('data/canonical/universe_manifest.json'))
           assert m['universe_gate_status']=='PASS', m
-          assert m.get('official_reconciliation_blocking_count', m['official_reconciliation_unresolved_count'])==0, m
+          assert m['geography_accounting_status']=='PASS', m
+          assert m.get('official_reconciliation_blocking_count',0)==0, m
           assert not m['mandate_exceptions_missing'], m
           assert m['canonical_eligible_count']==m['symbol_map_count'], m
           assert m['canonical_eligible_count']>0, m
-          print('UNIVERSE_GATE_PASS', m['canonical_eligible_count'], 'quarantined_unresolved=', m['official_reconciliation_unresolved_count'])
+          assert m['canonical_eligible_count'] < m['official_pre_geography_eligible_count'], 'V2.1 geography mandate did not remove any instrument'
+          print('UNIVERSE_V2_1_GATE_PASS',m['canonical_eligible_count'],'geography_excluded=',m['geography_excluded_count'])
           PY
       - name: Upload universe diagnostics and artifacts
         if: always()
@@ -64,6 +70,7 @@ jobs:
             data/canonical/universe_source_diagnostics.json
             data/canonical/cedear_universe_master.json
             data/canonical/cedear_universe_master.parquet
+            data/canonical/cedear_geography_exclusions.json
             data/canonical/cedear_mandate_exclusions.json
             data/canonical/cedear_universe_inclusions.json
             data/canonical/cedear_official_reconciliation_unresolved.json
