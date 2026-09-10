@@ -21,34 +21,25 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
-      - name: Run G4 and Deep Scenario regression tests
+      - name: Run G4 and Scenario V2.3 regression tests
         run: pytest -q tests/test_g4_cash_hurdle.py tests/test_deep_scenario_engine.py tests/test_deep_scenario_v23.py
       - name: Download exact dispatched valuation artifact
         run: |
-          VAL_RUN_ID="${{ inputs.valuation_run_id }}"
-          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios"
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
-          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
-          echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_valuation
-          gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
+          VAL_RUN_ID="${{ inputs.valuation_run_id }}";META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios";test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success";test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
+          echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV";mkdir -p data/upstream_valuation;gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
           python - <<'PY'
           import json,pandas as pd
-          d=json.load(open('data/upstream_valuation/e2e_lineage.json'));v=pd.read_parquet('data/upstream_valuation/deep_scenario_review_v2_1.parquet');top={str(x).upper() for x in d['topn_tickers']}
-          assert d['top_n']==30 and len(top)==30 and d['valuation_count']==30 and len(v)==30
-          assert set(v['cedear_ticker'].astype(str).str.upper())==top
-          assert int(v['scenario_validated'].fillna(False).astype(bool).sum())==28
+          d=json.load(open('data/upstream_valuation/e2e_lineage.json'));v=pd.read_parquet('data/upstream_valuation/deep_scenario_review_v2_1.parquet');m=json.load(open('data/upstream_valuation/deep_scenario_review_v2_1_manifest.json'));top={str(x).upper() for x in d['topn_tickers']};valid=v['scenario_validated'].fillna(False).astype(bool)
+          assert d['top_n']==30 and len(top)==30 and d['valuation_count']==30 and len(v)==30 and set(v['cedear_ticker'].astype(str).str.upper())==top
+          assert m['methodology_version']=='SCENARIO-2.3' and m.get('stress_separated_from_probabilistic_distribution') is True
+          assert int(valid.sum())==int(m['scenario_validated_count']) and int((~valid).sum())==int(m['scenario_blocked_count']) and int(m['scenario_validated_count'])+int(m['scenario_blocked_count'])==30
+          vv=v.loc[valid];assert ((vv['stress_target_price']>0)&(vv['stress_target_price']<=vv['bear_target_price'])&(vv['bear_target_price']<vv['base_target_price'])&(vv['base_target_price']<vv['bull_target_price'])).all();assert pd.to_numeric(vv['stress_probability'],errors='coerce').abs().le(1e-12).all()
           assert d.get('local_market_run_id') and d.get('portfolio_run_id')
           PY
       - name: Download lineage-pinned layers
         run: |
-          L=$(python -c "import json;print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['local_market_run_id'])")
-          P=$(python -c "import json;print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['portfolio_run_id'])")
-          echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_local data/upstream_portfolio
-          gh run download "$L" --name cedear-local-market-layer --dir data/upstream_local
-          gh run download "$P" --name portfolio-state-engine --dir data/upstream_portfolio
+          L=$(python -c "import json;print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['local_market_run_id'])");P=$(python -c "import json;print(json.load(open('data/upstream_valuation/e2e_lineage.json'))['portfolio_run_id'])");echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV";echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV";mkdir -p data/upstream_local data/upstream_portfolio;gh run download "$L" --name cedear-local-market-layer --dir data/upstream_local;gh run download "$P" --name portfolio-state-engine --dir data/upstream_portfolio
       - name: Restrict candidate layers to immutable Research Top-30
         run: |
           python - <<'PY'
@@ -57,29 +48,21 @@ jobs:
           for path in ['data/upstream_local/cedear_local_market.parquet','data/upstream_portfolio/portfolio_fit_quantitative.parquet']:
             df=pd.read_parquet(path);col='cedear_ticker' if 'cedear_ticker' in df.columns else 'ticker';raw=df[col].astype(str).str.upper().str.strip();sel=[]
             for t in top:
-              m=raw[raw.eq(t)].index.tolist() or [i for i,s in raw.items() if aliases.get(s,s)==aliases.get(t,t)]
-              assert len(m)==1,(path,t,m);assert m[0] not in sel;sel.append(m[0])
+              mm=raw[raw.eq(t)].index.tolist() or [i for i,s in raw.items() if aliases.get(s,s)==aliases.get(t,t)];assert len(mm)==1,(path,t,mm);assert mm[0] not in sel;sel.append(mm[0])
             o=df.loc[sel].copy().reset_index(drop=True);o[col]=top;assert len(o)==30 and o[col].nunique()==30;o.to_parquet(path,index=False)
           PY
-      - name: Build G4 Cash Hurdle from certified V2.3 scenarios
+      - name: Build G4-2.1 from certified Scenario V2.3 scenarios
         run: |
           python -m src.orchestration.build_g4_cash_hurdle --local-market data/upstream_local/cedear_local_market.parquet --valuation-inputs data/upstream_valuation/deep_scenario_review_v2_1.parquet --certified-scenario-review --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet --positions data/upstream_portfolio/portfolio_positions.parquet --policy config/g4_policy.yml --scenario-policy config/scenario_review_policy.yml --output-dir data/canonical/g4 --brokerage-rate 0.006
           python - <<'PY'
           import json
           from pathlib import Path
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'));m=json.load(open('data/canonical/g4/g4_manifest.json'))
-          assert m['methodology_version']=='G4-2.1',m
-          assert m['scenario_methodology_version']=='SCENARIO-2.3',m
-          assert m['scenario_review_count']==30,m
-          assert m['scenario_validated_count']==28 and m['scenario_blocked_count']==2,m
-          assert m.get('certified_scenario_review_consumed') is True,m
-          assert m['ticker_count']==30 and m['evaluated_count']+m['blocked_count']==30,m
-          assert m.get('g4_accounting_complete') is True,m
-          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'scenario_methodology_version':m['scenario_methodology_version'],'g4_methodology_version':m['methodology_version'],'handoff':'CERTIFIED_V2_3_SCENARIO_EXACT_RUN_DISPATCH'})
-          Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
+          assert m['methodology_version']=='G4-2.1' and m['scenario_methodology_version']=='SCENARIO-2.3';assert m['scenario_review_count']==30 and m['scenario_validated_count']+m['scenario_blocked_count']==30;assert m.get('certified_scenario_review_consumed') is True;assert m['ticker_count']==30 and m['evaluated_count']+m['blocked_count']==30 and m.get('g4_accounting_complete') is True
+          assert m.get('preservation_gate_scenario')=='STRESS' and m.get('probabilistic_bear_used_in_expected_return') is True and m.get('stress_probability_weighted') is False
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'scenario_methodology_version':m['scenario_methodology_version'],'g4_methodology_version':m['methodology_version'],'preservation_gate_scenario':'STRESS','probabilistic_bear_used_in_expected_return':True,'stress_probability_weighted':False,'handoff':'CERTIFIED_V2_3_SCENARIO_EXACT_RUN_DISPATCH'});Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
-      - name: Upload G4 artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: valuation-g4-cash-hurdle
           path: data/canonical/g4/
