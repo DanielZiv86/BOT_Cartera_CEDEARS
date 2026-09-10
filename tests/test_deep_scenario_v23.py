@@ -19,9 +19,14 @@ def test_v23_separates_stress_from_probabilistic_bear():
 
 def test_v23_probabilities_sum_to_one_and_base_is_dynamic():
     out,_=validate_scenarios(pd.DataFrame([row('HIGH',.9),row('LOW',.3)]),POLICY)
+    tol=1e-12
+    bear_min=float(POLICY['probabilities']['bear_min'])
     for _,r in out.iterrows():
-        assert abs(r['bull_probability']+r['base_probability']+r['bear_probability']-1)<1e-12
-        assert r['bear_probability']>=POLICY['probabilities']['bear_min']
+        assert abs(r['bull_probability']+r['base_probability']+r['bear_probability']-1)<tol
+        # Numerical-boundary safe: 0.15 and 0.14999999999999997 are the same
+        # contractual probability for binary floating-point purposes. Do not relax
+        # the economic bear_min; only tolerate machine epsilon at the comparison.
+        assert r['bear_probability'] + tol >= bear_min
     assert out.iloc[0]['base_probability'] > out.iloc[1]['base_probability']
 
 def test_v23_low_confidence_moves_probabilistic_bear_toward_stress():
