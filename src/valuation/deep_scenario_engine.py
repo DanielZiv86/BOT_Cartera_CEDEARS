@@ -32,18 +32,33 @@ def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     if any(k in text for k in corporate_keywords):return 'CORPORATE','COMAFI_OR_PROVIDER_METADATA'
     return None,'UNVERIFIED'
 
-def _verified_adr(row:pd.Series,policy:dict)->tuple[float,bool,str|None]:
+def _security_keys(row:pd.Series)->list[str]:
+    keys=[]
+    for raw in (row.get('underlying_ticker'),row.get('cedear_ticker')):
+        key=str(raw or '').strip().upper()
+        if key and key not in keys:keys.append(key)
+    return keys
+
+def _verified_security_mapping(row:pd.Series,policy:dict)->tuple[float,bool,str|None,str|None]:
     direct=_num(row.get('adr_shares_per_depositary_receipt'))
-    if direct is not None and direct>0:return direct,bool(row.get('economic_unit_normalization_verified',False)),str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA')
-    ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper(); entry=((policy.get('identity',{}) or {}).get('verified_adr_ratios',{}) or {}).get(ticker)
-    if isinstance(entry,dict):
-        ratio=_num(entry.get('ordinary_shares_per_ads'))
-        if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source'])
-    return 1.0,False,None
+    if direct is not None and direct>0 and bool(row.get('economic_unit_normalization_verified',False)):
+        return direct,True,str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA'),str(row.get('foreign_security_type') or 'UPSTREAM_VERIFIED_SECURITY')
+    cfg=policy.get('identity',{}) or {}; adrs=cfg.get('verified_adr_ratios',{}) or {}; listings=cfg.get('verified_direct_foreign_listings',{}) or {}
+    for key in _security_keys(row):
+        entry=adrs.get(key)
+        if isinstance(entry,dict):
+            ratio=_num(entry.get('ordinary_shares_per_ads'))
+            if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source']),'ADS_ADR'
+    for key in _security_keys(row):
+        entry=listings.get(key)
+        if isinstance(entry,dict):
+            ratio=_num(entry.get('ordinary_shares_per_us_traded_share'))
+            if ratio is not None and ratio>0 and entry.get('source') and entry.get('security_type'):return ratio,True,str(entry['source']),str(entry['security_type'])
+    return 1.0,False,None,None
 
 def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,Any]]:
     blockers=[]; flags=[]; cfg=policy.get('identity',{}) or {}; current=_num(row.get('current_price')); eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized'))
-    adr,adr_verified,adr_source=_verified_adr(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
+    adr,adr_verified,adr_source,security_type=_verified_security_mapping(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
     implied_eps=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; ratio_eps=implied_eps/current if implied_eps is not None and current and current>0 else None
     bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); implied_pb=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None; ratio_pb=implied_pb/current if implied_pb is not None and current and current>0 else None
     lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80)); identity_method='EPS_PE' if ratio_eps is not None else ('PB' if ratio_pb is not None else 'UNVERIFIABLE'); ratio=ratio_eps if ratio_eps is not None else ratio_pb; implied=implied_eps if ratio_eps is not None else implied_pb
@@ -55,12 +70,14 @@ def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,An
     country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
     us_traded=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
     if non_us and us_traded and not normalization_verified:
-        blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED')
-        flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
-    if adr_verified and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
-    if adr_verified and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
+        blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED'); flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    if adr_verified and security_type=='ADS_ADR' and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
+    if adr_verified and security_type=='ADS_ADR' and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
+    if adr_verified and security_type not in (None,'ADS_ADR'):
+        flags.append('VERIFIED_DIRECT_FOREIGN_LISTING_MAPPING_APPLIED')
+        if adr==1.0:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
     if identity_method=='PB':flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')
-    status='VERIFIED_NORMALIZED' if not blockers else 'BLOCKED'; return not blockers,blockers,{'economic_identity_status':status,'economic_identity_method':identity_method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':adr_verified,'identity_adr_ratio_source':adr_source,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
+    status='VERIFIED_NORMALIZED' if not blockers else 'BLOCKED'; return not blockers,blockers,{'economic_identity_status':status,'economic_identity_method':identity_method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':adr_verified,'identity_adr_ratio_source':adr_source,'identity_security_type':security_type,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
 
 def _scenario_unit_row(row:pd.Series,meta:dict)->pd.Series:
     r=row.copy(); adr=_num(meta.get('identity_adr_ratio_applied')) or 1.0; fx=_num(meta.get('identity_fx_applied')) or 1.0; factor=adr*fx
@@ -123,25 +140,24 @@ def _equity_review(row,policy):
     if bear is not None and base is not None and bull is not None and not (bear>0 and bear<base<bull):blockers.append('FUNDAMENTAL_SCENARIO_ORDER_INVALID')
     bp,bap,brp=_dynamic_probabilities(confidence,disp,policy); out.update(**meta,pre_review_bull_target_price=_num(row.get('bull_target_price')),pre_review_base_target_price=_num(row.get('base_target_price')),pre_review_bear_target_price=_num(row.get('bear_target_price')),bull_target_price=bull,base_target_price=base,bear_target_price=bear,bull_probability=bp,base_probability=bap,bear_probability=brp,scenario_sector_model=sector,scenario_sector_source=sector_source,scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags+meta.get('identity_flags',[]),scenario_method='SECTOR_AWARE_FUNDAMENTAL_SCENARIO_ENGINE_V2_2'); return out
 
+def _non_equity_review(row:pd.Series)->dict[str,Any]:
+    out=row.to_dict(); blockers=[]; flags=['NON_EQUITY_TRACKER_REVIEWED_FAIL_CLOSED']; status=str(row.get('valuation_status') or '').upper()
+    if status!='VALUATION_READY':blockers.append('UPSTREAM_VALUATION_NOT_READY')
+    bull=_num(row.get('bull_target_price')); base=_num(row.get('base_target_price')); bear=_num(row.get('bear_target_price'))
+    if any(x is None or x<=0 for x in (bull,base,bear)) or not (bear<base<bull):blockers.append('NON_EQUITY_SCENARIO_TARGETS_MISSING_OR_INVALID')
+    probs=[_num(row.get(c)) for c in ('bull_probability','base_probability','bear_probability')]
+    if any(x is None or x<0 or x>1 for x in probs) or (all(x is not None for x in probs) and abs(sum(probs)-1.0)>1e-6):blockers.append('NON_EQUITY_SCENARIO_PROBABILITIES_INVALID')
+    out.update(scenario_sector_model=None,scenario_sector_source='N/A',economic_identity_status='N/A',economic_identity_method='N/A',identity_adr_ratio_applied=1.0,identity_adr_ratio_verified=False,identity_adr_ratio_source=None,identity_security_type='NON_EQUITY',identity_fx_applied=1.0,identity_implied_price=None,identity_implied_to_market_ratio=None,identity_target_unit='N/A',identity_eps_unit='N/A',identity_flags=[],scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags,scenario_method='NON_EQUITY_TRACKER_FAIL_CLOSED_V2_2'); return out
+
 def review_scenarios(df:pd.DataFrame,policy:dict)->pd.DataFrame:
     rows=[]
     for _,row in df.iterrows():
         engine=str(row.get('valuation_engine_type') or '').upper()
-        if engine=='EQUITY':rows.append(_equity_review(row,policy))
-        else:
-            out=row.to_dict(); out.update(scenario_validated=True,scenario_review_status='SCENARIO_VALIDATED',scenario_review_blockers=[],scenario_review_flags=['NON_EQUITY_TRACKER_RETAINED'],scenario_method='NON_EQUITY_TRACKER_V1'); rows.append(out)
+        rows.append(_equity_review(row,policy) if engine=='EQUITY' else _non_equity_review(row))
     return pd.DataFrame(rows)
 
 
 def validate_scenarios(df:pd.DataFrame,policy:dict)->tuple[pd.DataFrame,dict[str,Any]]:
-    """Compatibility contract used by regression tests and orchestration audits."""
-    reviewed=review_scenarios(df,policy)
-    validated=int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()) if 'scenario_validated' in reviewed.columns else 0
-    total=int(len(reviewed))
-    manifest={
-        'methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),
-        'scenario_review_count':total,
-        'scenario_validated_count':validated,
-        'scenario_blocked_count':total-validated,
-    }
+    reviewed=review_scenarios(df,policy); validated=int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()) if 'scenario_validated' in reviewed.columns else 0; total=int(len(reviewed))
+    manifest={'methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),'scenario_methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),'scenario_review_count':total,'scenario_validated_count':validated,'scenario_blocked_count':total-validated}
     return reviewed,manifest
