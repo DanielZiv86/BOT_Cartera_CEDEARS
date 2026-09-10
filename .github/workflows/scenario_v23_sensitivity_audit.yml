@@ -1,0 +1,96 @@
+name: Scenario V2.3 Sensitivity Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      valuation_run_id:
+        description: Certified V2.2 valuation run used as immutable comparison baseline
+        required: true
+        default: "34510886689"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit-v23:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      V23_REF: audit/scenario-v2-3-probabilistic-bear
+    steps:
+      - name: Checkout isolated Scenario V2.3 implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.V23_REF }}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Certify isolated code ref and V2.3 policy
+        run: |
+          test "$(git branch --show-current)" = "$V23_REF"
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          p=yaml.safe_load(Path('config/scenario_review_policy.yml').read_text()) or {}
+          assert p.get('methodology_version')=='SCENARIO-2.3',p
+          print('ISOLATED_SCENARIO_V2_3_REF=PASS')
+          PY
+      - name: Run V2.2 compatibility and V2.3 distribution regressions
+        run: pytest -q tests/test_deep_scenario_engine.py tests/test_deep_scenario_v23.py
+      - name: Download immutable certified V2.2 baseline
+        run: |
+          R="${{ inputs.valuation_run_id }}"
+          META=$(gh run view "$R" --json workflowName,conclusion,databaseId)
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios"
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
+          mkdir -p data/baseline
+          gh run download "$R" --name canonical-valuation-scenarios --dir data/baseline
+          test -f data/baseline/deep_scenario_review_v2_1.parquet
+      - name: Rebuild same Top-N under Scenario V2.3 and audit sensitivity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+          import yaml
+          from src.valuation.deep_scenario_engine import validate_scenarios
+          base=pd.read_parquet('data/baseline/deep_scenario_review_v2_1.parquet')
+          assert len(base)==30
+          policy=yaml.safe_load(Path('config/scenario_review_policy.yml').read_text()) or {}
+          assert policy['methodology_version']=='SCENARIO-2.3'
+          v23,manifest=validate_scenarios(base,policy)
+          assert len(v23)==30
+          valid=v23['scenario_validated'].fillna(False).astype(bool)
+          equities=v23['valuation_engine_type'].fillna('').astype(str).str.upper().eq('EQUITY') & valid
+          assert (v23.loc[equities,'stress_target_price'] < v23.loc[equities,'bear_target_price']).all()
+          assert (v23.loc[equities,'bear_target_price'] < v23.loc[equities,'base_target_price']).all()
+          assert (v23.loc[equities,'base_target_price'] < v23.loc[equities,'bull_target_price']).all()
+          assert (v23.loc[equities,'stress_probability']==0).all()
+          ps=v23.loc[valid,['bull_probability','base_probability','bear_probability']].sum(axis=1)
+          assert np.allclose(ps,1.0)
+          def expected_return(df):
+              cur=pd.to_numeric(df['current_price'],errors='coerce')
+              return (pd.to_numeric(df['bull_target_price'],errors='coerce')/cur-1)*pd.to_numeric(df['bull_probability'],errors='coerce') + (pd.to_numeric(df['base_target_price'],errors='coerce')/cur-1)*pd.to_numeric(df['base_probability'],errors='coerce') + (pd.to_numeric(df['bear_target_price'],errors='coerce')/cur-1)*pd.to_numeric(df['bear_probability'],errors='coerce')
+          old=base.copy(); old_valid=old['scenario_validated'].fillna(False).astype(bool)
+          old_er=expected_return(old); new_er=expected_return(v23)
+          comparison=pd.DataFrame({'cedear_ticker':v23['cedear_ticker'],'scenario_validated_v22':old_valid,'scenario_validated_v23':valid,'current_price':v23['current_price'],'v22_bear_target':base['bear_target_price'],'v23_stress_target':v23['stress_target_price'],'v23_probabilistic_bear_target':v23['bear_target_price'],'base_target':v23['base_target_price'],'bull_target':v23['bull_target_price'],'v22_expected_return':old_er,'v23_expected_return':new_er,'expected_return_delta':new_er-old_er,'v23_stress_return':pd.to_numeric(v23['stress_target_price'],errors='coerce')/pd.to_numeric(v23['current_price'],errors='coerce')-1,'v23_bear_return':pd.to_numeric(v23['bear_target_price'],errors='coerce')/pd.to_numeric(v23['current_price'],errors='coerce')-1,'v23_bull_probability':v23['bull_probability'],'v23_base_probability':v23['base_probability'],'v23_bear_probability':v23['bear_probability']})
+          eligible=comparison[comparison['scenario_validated_v22'] & comparison['scenario_validated_v23']].copy()
+          def stats(s):
+              s=pd.to_numeric(s,errors='coerce').dropna(); return {'count':int(len(s)),'mean':float(s.mean()),'median':float(s.median()),'min':float(s.min()),'max':float(s.max())}
+          report={'methodology_version':'SCENARIO-2.3','baseline_valuation_run_id':int('${{ inputs.valuation_run_id }}'),'top_n_count':30,'v22_validated_count':int(old_valid.sum()),'v23_validated_count':int(valid.sum()),'same_candidate_sensitivity_count':int(len(eligible)),'v22_expected_return':stats(eligible['v22_expected_return']),'v23_expected_return':stats(eligible['v23_expected_return']),'v23_stress_return':stats(eligible['v23_stress_return']),'v23_probabilistic_bear_return':stats(eligible['v23_bear_return']),'v22_er_above_5pct':int((eligible['v22_expected_return']>.05).sum()),'v23_er_above_5pct':int((eligible['v23_expected_return']>.05).sum()),'v22_er_above_8pct':int((eligible['v22_expected_return']>.08).sum()),'v23_er_above_8pct':int((eligible['v23_expected_return']>.08).sum()),'stress_is_not_probabilized':True,'g4_policy_changed':False,'v23_code_ref':'audit/scenario-v2-3-probabilistic-bear'}
+          Path('data/audit').mkdir(parents=True,exist_ok=True)
+          comparison.to_csv('data/audit/scenario_v22_vs_v23_28_candidate_sensitivity.csv',index=False)
+          v23.to_parquet('data/audit/deep_scenario_review_v2_3.parquet',index=False)
+          Path('data/audit/scenario_v23_sensitivity_report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scenario-v23-sensitivity-audit
+          path: data/audit/
+          if-no-files-found: error
+          retention-days: 90
