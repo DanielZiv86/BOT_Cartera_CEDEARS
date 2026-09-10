@@ -1,4 +1,4 @@
-methodology_version: SCENARIO-2.2
+methodology_version: SCENARIO-2.3
 horizon_months: 12
 
 identity:
@@ -7,67 +7,23 @@ identity:
   require_verified_normalization_when_units_differ: true
   require_verified_foreign_us_traded_normalization: true
   verified_adr_ratios:
-    BBV:
-      ordinary_shares_per_ads: 1.0
-      source: BBVA_OFFICIAL_ADR_PAGE_1_TO_1
-    HSBC:
-      ordinary_shares_per_ads: 5.0
-      source: HSBC_INVESTOR_FAQ_ADR_PROGRAM
-    ING:
-      ordinary_shares_per_ads: 1.0
-      source: ING_SEC_REGISTERED_SECURITIES_1_TO_1
-    RDS:
-      ordinary_shares_per_ads: 2.0
-      source: SHELL_ADS_FACILITY_OFFICIAL
-    SHEL:
-      ordinary_shares_per_ads: 2.0
-      source: SHELL_ADS_FACILITY_OFFICIAL
-    SAN:
-      ordinary_shares_per_ads: 1.0
-      source: SANTANDER_OFFICIAL_FAQ_1_TO_1
-    TXR:
-      ordinary_shares_per_ads: 10.0
-      source: TERNIUM_ADS_DISCLOSURE
-    TX:
-      ordinary_shares_per_ads: 10.0
-      source: TERNIUM_ADS_DISCLOSURE
-    VOD:
-      ordinary_shares_per_ads: 10.0
-      source: VODAFONE_INVESTOR_FAQ_ADR_RATIO
-    EQNR:
-      ordinary_shares_per_ads: 1.0
-      source: EQUINOR_OFFICIAL_ANNUAL_REPORT_ADS_1_TO_1
+    BBV: {ordinary_shares_per_ads: 1.0, source: BBVA_OFFICIAL_ADR_PAGE_1_TO_1}
+    HSBC: {ordinary_shares_per_ads: 5.0, source: HSBC_INVESTOR_FAQ_ADR_PROGRAM}
+    ING: {ordinary_shares_per_ads: 1.0, source: ING_SEC_REGISTERED_SECURITIES_1_TO_1}
+    RDS: {ordinary_shares_per_ads: 2.0, source: SHELL_ADS_FACILITY_OFFICIAL}
+    SHEL: {ordinary_shares_per_ads: 2.0, source: SHELL_ADS_FACILITY_OFFICIAL}
+    SAN: {ordinary_shares_per_ads: 1.0, source: SANTANDER_OFFICIAL_FAQ_1_TO_1}
+    TXR: {ordinary_shares_per_ads: 10.0, source: TERNIUM_ADS_DISCLOSURE}
+    TX: {ordinary_shares_per_ads: 10.0, source: TERNIUM_ADS_DISCLOSURE}
+    VOD: {ordinary_shares_per_ads: 10.0, source: VODAFONE_INVESTOR_FAQ_ADR_RATIO}
+    EQNR: {ordinary_shares_per_ads: 1.0, source: EQUINOR_OFFICIAL_ANNUAL_REPORT_ADS_1_TO_1}
   verified_direct_foreign_listings:
-    AEG:
-      ordinary_shares_per_us_traded_share: 1.0
-      security_type: NEW_YORK_REGISTRY_SHARE
-      source: AEGON_OFFICIAL_NEW_YORK_REGISTRY_SHARE_1_TO_1
+    AEG: {ordinary_shares_per_us_traded_share: 1.0, security_type: NEW_YORK_REGISTRY_SHARE, source: AEGON_OFFICIAL_NEW_YORK_REGISTRY_SHARE_1_TO_1}
 
 sector_classification:
   fail_closed_when_unverified: true
-  corporate_keywords:
-    - TECHNOLOGY
-    - SOFTWARE
-    - SEMICONDUCTOR
-    - HEALTH
-    - PHARMA
-    - CONSUMER
-    - INDUSTRIAL
-    - MATERIAL
-    - COMMUNICATION
-    - TELECOM
-    - UTILITY
-    - REAL ESTATE
-    - AEROSPACE
-    - TRANSPORT
-    - RETAIL
-    - FOOD
-    - BEVERAGE
-
-sector_overrides:
-  RDS: ENERGY
-  SHEL: ENERGY
-  V: CORPORATE
+  corporate_keywords: [TECHNOLOGY, SOFTWARE, SEMICONDUCTOR, HEALTH, PHARMA, CONSUMER, INDUSTRIAL, MATERIAL, COMMUNICATION, TELECOM, UTILITY, REAL ESTATE, AEROSPACE, TRANSPORT, RETAIL, FOOD, BEVERAGE]
+sector_overrides: {RDS: ENERGY, SHEL: ENERGY, V: CORPORATE}
 
 corporate:
   base_growth_floor: -0.10
@@ -87,7 +43,6 @@ corporate:
   bull_growth_cap: 0.30
   bull_multiple_factor: 1.12
   bull_pe_cap: 30.0
-
 financials:
   roe_floor: 0.04
   roe_cap: 0.22
@@ -104,7 +59,6 @@ financials:
   bull_pb_factor: 1.20
   bull_pb_cap: 5.00
   minimum_bull_premium_to_base: 0.10
-
 energy:
   base_pe_floor: 5.0
   base_pe_cap: 14.0
@@ -120,29 +74,43 @@ consensus:
   high_distance_from_median_cap: 0.50
 plausibility:
   max_standard_bull_upside: 0.60
+
+# V2.3 keeps the old severe sector downside formulas, but they now produce
+# stress_target_price and are explicitly excluded from expected-return probabilities.
+probabilistic_bear:
+  stress_weight_base: 0.35
+  stress_weight_min: 0.25
+  stress_weight_max: 0.60
+  low_confidence_stress_weight_max: 0.20
+  dispersion_penalty_start: 0.50
+  dispersion_full_penalty_at: 1.25
+  dispersion_stress_weight_max: 0.10
+  consensus_low_blend: 0.25
+  ordering_epsilon_pct: 0.001
 probabilities:
-  base_probability: 0.50
+  base_min: 0.45
+  base_max: 0.65
   bull_min: 0.15
   bull_max: 0.27
+  bull_hard_min: 0.10
+  bull_hard_max: 0.30
+  bear_min: 0.15
   dispersion_penalty_start: 0.50
+  dispersion_full_penalty_at: 1.25
+  dispersion_base_penalty_max: 0.10
   dispersion_bull_penalty_max: 0.07
 
 policy_notes:
-  - Economic identity is a hard precondition before scenario validation.
-  - ADR/share/FX normalization is applied to scenario fundamentals as well as identity checks; scenarios and market prices must live in the same economic unit.
-  - ADR/share normalization is applied only from explicit issuer or SEC verified mappings; ratios are never reverse-engineered from prices. A verified 1:1 ADS ratio is still recorded explicitly rather than silently assumed.
-  - Foreign issuers traded in the US fail closed unless an explicit verified ADR/ADS ratio, verified direct/New York Registry mapping, or upstream verified economic-unit normalization exists.
-  - Aegon AEG is a verified New York Registry common share, not an ADR; one NYRS equals one Amsterdam-listed common share.
-  - Equinor EQNR is a verified NYSE ADS; each ADS represents one ordinary share.
-  - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
-  - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
-  - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
-  - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
-  - Visa is routed to CORPORATE because its economics are payment-network/technology-like rather than bank balance-sheet economics.
-  - Financials use normalized BVPS, ROE, observed market P/B and a ROE-implied fair P/B anchor; conventional corporate Debt/Equity is excluded from their stress model.
-  - Financial Bull must be strictly above Base, subject to the same external plausibility cap.
-  - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
-  - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Bear is independent of analyst low; Bull remains plausibility-capped.
-  - Missing material evidence fails closed; no fallback fabricates a scenario.
-  - Expected return is calculated only after scenario review.
+  - Economic identity remains a hard precondition before scenario validation.
+  - ADR/share/FX normalization is unchanged from V2.2 and applies to scenario fundamentals and identity checks.
+  - Foreign US-traded issuers remain fail-closed without verified economic-unit normalization.
+  - Sector classification remains fail-closed; unknown securities never silently default to CORPORATE.
+  - The V2.2 severe Corporate EPS/multiple compression, Financial P/B compression and Energy cycle compression are retained as explicit stress_target_price diagnostics.
+  - Stress is a preservation/downside diagnostic and has stress_probability=0; it is not part of the Bull/Base/Bear expected-return distribution.
+  - Probabilistic Bear is constructed strictly between Stress and Base from fundamental downside distance, confidence, dispersion and corroborating analyst-low evidence.
+  - Analyst low is clipped to the economically valid Stress/Base interval and is never the sole Bear engine.
+  - Base probability is no longer fixed at 50 percent; confidence increases concentration around Base while dispersion reduces it.
+  - Bull probability remains bounded and falls with uncertainty/dispersion; Bear is the residual subject to a minimum downside probability.
+  - For validated equities the mandatory ordering is Stress < Bear < Base < Bull.
+  - Missing material evidence remains fail-closed; no fallback fabricates a scenario.
+  - G4-2.1 economic policy, cash hurdle, costs and preservation rules are not changed by Scenario V2.3.
