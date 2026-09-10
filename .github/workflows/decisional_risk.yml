@@ -43,7 +43,11 @@ jobs:
           assert int(d.get('canonical_eligible_universe_count',0)) > 0,d
           assert int(d['valuation_count']) == 30,d
           assert int(d['g4_candidate_count']) == 30,d
-          assert d.get('handoff') == 'CERTIFIED_V2_1_SCENARIO_EXACT_RUN_DISPATCH',d
+          assert d.get('handoff') == 'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',d
+          assert d.get('scenario_methodology_version') == 'SCENARIO-2.2',d
+          assert d.get('g4_methodology_version') == 'G4-2.1',d
+          assert m.get('scenario_methodology_version') == 'SCENARIO-2.2',m
+          assert m.get('methodology_version') == 'G4-2.1',m
           assert int(d.get('scenario_validated_count',0)) == 28,d
           assert int(d.get('scenario_blocked_count',0)) == 2,d
           ticker_count=int(m.get('ticker_count',0) or 0)
