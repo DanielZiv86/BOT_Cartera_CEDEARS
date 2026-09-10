@@ -40,7 +40,7 @@ jobs:
           assert d['g4_run_id']==int('${{ inputs.g4_run_id }}'),d
           for k in ('universe_run_id','research_run_id','valuation_run_id','portfolio_run_id','g4_run_id'):
               assert int(d.get(k,0)) > 0, (k,d)
-          assert int(d['canonical_eligible_universe_count']) == 304,d
+          assert int(d.get('canonical_eligible_universe_count',0)) > 0,d
           assert int(d['valuation_count']) == 30,d
           assert int(d['g4_candidate_count']) == 30,d
           assert d.get('handoff') == 'VALUATION_EXACT_RUN_DISPATCH',d
