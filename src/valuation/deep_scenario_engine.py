@@ -32,21 +32,41 @@ def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     if any(k in text for k in corporate_keywords):return 'CORPORATE','COMAFI_OR_PROVIDER_METADATA'
     return None,'UNVERIFIED'
 
+def _verified_adr(row:pd.Series,policy:dict)->tuple[float,bool,str|None]:
+    direct=_num(row.get('adr_shares_per_depositary_receipt'))
+    if direct is not None and direct>0:
+        return direct,bool(row.get('economic_unit_normalization_verified',False)),str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA')
+    ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper()
+    entry=((policy.get('identity',{}) or {}).get('verified_adr_ratios',{}) or {}).get(ticker)
+    if isinstance(entry,dict):
+        ratio=_num(entry.get('ordinary_shares_per_ads'))
+        if ratio is not None and ratio>0 and entry.get('source'):
+            return ratio,True,str(entry['source'])
+    return 1.0,False,None
+
 def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,Any]]:
     blockers=[]; flags=[]; cfg=policy.get('identity',{}) or {}; current=_num(row.get('current_price')); eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized'))
-    adr=_num(row.get('adr_shares_per_depositary_receipt')); fx=_num(row.get('fundamental_fx_to_market')); adr=1.0 if adr is None else adr; fx=1.0 if fx is None else fx
-    implied=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; ratio=implied/current if implied is not None and current and current>0 else None
+    adr,adr_verified,adr_source=_verified_adr(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
+    implied_eps=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None
+    ratio_eps=implied_eps/current if implied_eps is not None and current and current>0 else None
+    bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book')
+    implied_pb=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None
+    ratio_pb=implied_pb/current if implied_pb is not None and current and current>0 else None
     lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80))
-    if ratio is None:blockers.append('ECONOMIC_IDENTITY_EPS_PE_UNVERIFIABLE')
-    elif not lo<=ratio<=hi:blockers.append('ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH')
+    identity_method='EPS_PE' if ratio_eps is not None else ('PB' if ratio_pb is not None else 'UNVERIFIABLE')
+    ratio=ratio_eps if ratio_eps is not None else ratio_pb; implied=implied_eps if ratio_eps is not None else implied_pb
+    if ratio is None:blockers.append('ECONOMIC_IDENTITY_UNVERIFIABLE')
+    elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{identity_method}_UNIT_MISMATCH')
     if not str(row.get('underlying_ticker') or '').strip():blockers.append('ECONOMIC_IDENTITY_UNDERLYING_MISSING')
     target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper()
-    if target!=eps_unit and not bool(row.get('economic_unit_normalization_verified',False)):blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
-    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper()
-    non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
-    if non_us and market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM') and ratio is not None and not lo<=ratio<=hi and not bool(row.get('economic_unit_normalization_verified',False)): flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    normalization_verified=bool(row.get('economic_unit_normalization_verified',False)) or adr_verified
+    if target!=eps_unit and not normalization_verified:blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
+    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
+    if non_us and market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM') and ratio is not None and not lo<=ratio<=hi and not normalization_verified: flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    if adr_verified and adr!=1.0: flags.append('VERIFIED_ADR_RATIO_APPLIED')
+    if identity_method=='PB': flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')
     status='VERIFIED_NORMALIZED' if not blockers else 'BLOCKED'
-    return not blockers,blockers,{'economic_identity_status':status,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
+    return not blockers,blockers,{'economic_identity_status':status,'economic_identity_method':identity_method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':adr_verified,'identity_adr_ratio_source':adr_source,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
 
 def _consensus(row,current,policy):
     high=_first_num(row,'consensus_target_high','bull_target_price'); med=_first_num(row,'consensus_target_median','base_target_price'); low=_first_num(row,'consensus_target_low','bear_target_price'); flags=[]
@@ -66,7 +86,7 @@ def _financial_targets(row,current,median,bull_cap,policy):
     c=policy.get('financials',{}) or {}; bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); roe=_rate(_first_num(row,'fundamental_roe','roe')); flags=['DEBT_EQUITY_NOT_USED_FOR_FINANCIALS']
     if bv is None and pb is not None and pb>0:bv=current/pb
     if bv is None or bv<=0 or roe is None:raise ValueError('FINANCIAL_FUNDAMENTALS_INCOMPLETE')
-    r=_clip(roe,float(c.get('roe_floor',.04)),float(c.get('roe_cap',.22))); basepb=_clip(float(c.get('base_pb_anchor',1))+float(c.get('roe_pb_sensitivity',3))*(r-float(c.get('cost_of_equity_anchor',.10))),float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',2.2))); f=bv*basepb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*f+blend*median; bear=bv*max(float(c.get('bear_pb_floor',.35)),basepb*float(c.get('bear_pb_factor',.72))); bull=min(bv*min(float(c.get('bull_pb_cap',2.75)),basepb*float(c.get('bull_pb_factor',1.2))),bull_cap); return bear,base,bull,flags
+    r=_clip(roe,float(c.get('roe_floor',.04)),float(c.get('roe_cap',.22))); basepb=_clip(float(c.get('base_pb_anchor',1))+float(c.get('roe_pb_sensitivity',3))*(r-float(c.get('cost_of_equity_anchor',.10))),float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',2.2))); f=bv*basepb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*f+blend*median; bear=bv*max(float(c.get('bear_pb_floor',.35)),basepb*float(c.get('bear_pb_factor',.72))); raw_bull=bv*min(float(c.get('bull_pb_cap',2.75)),basepb*float(c.get('bull_pb_factor',1.2))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags.append('FINANCIAL_BULL_ORDERING_FLOOR_APPLIED') if bull>raw_bull else None; return bear,base,bull,flags
 def _energy_targets(row,current,median,bull_cap,policy):
     c=policy.get('energy',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); fcf=_rate(_first_num(row,'fundamental_fcf_yield','fcf_yield')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
     if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('ENERGY_FUNDAMENTALS_INCOMPLETE')
