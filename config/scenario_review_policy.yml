@@ -1,18 +1,36 @@
-methodology_version: SCENARIO-2.0
+methodology_version: SCENARIO-2.1
 horizon_months: 12
 
 identity:
   eps_pe_to_price_ratio_min: 0.55
   eps_pe_to_price_ratio_max: 1.80
+  require_verified_normalization_when_units_differ: true
 
-# Explicit overrides are auditable and only used where provider sector metadata may be absent.
+sector_classification:
+  fail_closed_when_unverified: true
+  corporate_keywords:
+    - TECHNOLOGY
+    - SOFTWARE
+    - SEMICONDUCTOR
+    - HEALTH
+    - PHARMA
+    - CONSUMER
+    - INDUSTRIAL
+    - MATERIAL
+    - COMMUNICATION
+    - TELECOM
+    - UTILITY
+    - REAL ESTATE
+    - AEROSPACE
+    - TRANSPORT
+    - RETAIL
+    - FOOD
+    - BEVERAGE
+
+# Overrides remain auditable exceptions, not a substitute for official sector metadata.
 sector_overrides:
-  MFG: FINANCIALS
-  MUFG: FINANCIALS
-  NMR: FINANCIALS
   RDS: ENERGY
   SHEL: ENERGY
-  PBR: ENERGY
 
 corporate:
   base_growth_floor: -0.10
@@ -60,10 +78,8 @@ energy:
 consensus:
   dispersion_review_threshold: 0.75
   high_distance_from_median_cap: 0.50
-
 plausibility:
   max_standard_bull_upside: 0.60
-
 probabilities:
   base_probability: 0.50
   bull_min: 0.15
@@ -72,13 +88,14 @@ probabilities:
   dispersion_bull_penalty_max: 0.07
 
 policy_notes:
-  - Economic identity is a hard precondition: underlying security, EPS unit and target-price unit must be coherent before scenario validation.
-  - EPS x P/E must reconcile to the market price within a bounded sanity interval; a likely ADR/share/unit mismatch fails closed.
-  - Financials use P/B and ROE; conventional corporate Debt/Equity is explicitly excluded from their scenario stress.
-  - Energy uses normalized earnings plus FCF evidence when available, cycle stress and dividend support.
-  - Other corporates retain EPS/growth/multiple logic with bounded leverage stress.
+  - Economic identity is a hard precondition before scenario validation.
+  - EPS x P/E is reconciled after explicit ADR/share and FX normalization factors when those factors are verified.
+  - A foreign/ADR unit mismatch is blocked; the engine never guesses an ADR ratio or FX conversion.
+  - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
+  - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
+  - Financials use P/B and ROE; conventional corporate Debt/Equity is excluded from their stress model.
+  - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Bear is independent of analyst low. Bull remains plausibility-capped and consensus high is winsorised.
-  - Probabilities remain dynamic and confidence/dispersion-aware.
-  - Missing material evidence for the selected sector model fails closed; no fallback fabricates a scenario.
+  - Bear is independent of analyst low; Bull remains plausibility-capped.
+  - Missing material evidence fails closed; no fallback fabricates a scenario.
   - Expected return is calculated only after scenario review.
