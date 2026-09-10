@@ -43,6 +43,9 @@ jobs:
           assert r['g4_run_id']==int('${{ inputs.g4_run_id }}')==g['g4_run_id'],(r,g)
           for k in ('e2e_run_id','universe_run_id','research_run_id','valuation_run_id','local_market_run_id','portfolio_run_id','g4_run_id'):
               assert r.get(k)==g.get(k),(k,r,g)
+          assert g.get('scenario_methodology_version')=='SCENARIO-2.2',g
+          assert g.get('g4_methodology_version')=='G4-2.1',g
+          assert g.get('handoff')=='CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',g
           PY
       - name: Build Committee decision and persist Shadow Book
         run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee
@@ -72,7 +75,11 @@ jobs:
           scenario_blocked_count=int(l.get('scenario_blocked_count',0) or 0)
           assert scenario_review_count==30,l
           assert scenario_validated_count + scenario_blocked_count == scenario_review_count,l
-          assert l.get('handoff') == 'CERTIFIED_V2_1_SCENARIO_EXACT_RUN_DISPATCH',l
+          assert l.get('scenario_methodology_version') == 'SCENARIO-2.2',l
+          assert l.get('g4_methodology_version') == 'G4-2.1',l
+          assert l.get('handoff') == 'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',l
+          assert g.get('methodology_version') == 'G4-2.1',g
+          assert g.get('scenario_methodology_version') == 'SCENARIO-2.2',g
           ticker_count=int(g.get('ticker_count',0) or 0)
           evaluated=int(g.get('evaluated_count',0) or 0)
           blocked=int(g.get('blocked_count',0) or 0)
@@ -107,7 +114,7 @@ jobs:
               assert c['new_trades']==[],c
           else:
               raise AssertionError(('UNKNOWN_COMMITTEE_DECISION',c))
-          print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'rationale':c['rationale'],'canonical_eligible_universe_count':eligible,'scenario_validated_count':scenario_validated_count,'scenario_blocked_count':scenario_blocked_count,'lineage':l},indent=2))
+          print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'rationale':c['rationale'],'canonical_eligible_universe_count':eligible,'scenario_validated_count':scenario_validated_count,'scenario_blocked_count':scenario_blocked_count,'scenario_methodology_version':l['scenario_methodology_version'],'g4_methodology_version':l['g4_methodology_version'],'lineage':l},indent=2))
           PY
       - name: Upload Committee and final lineage artifacts
         uses: actions/upload-artifact@v4
