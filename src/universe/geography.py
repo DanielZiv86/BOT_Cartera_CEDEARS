@@ -36,14 +36,21 @@ def _country_code(value: object) -> str:
     return COUNTRY_ALIASES.get(normalized,normalized)
 
 
+def _is_caja_reconciled(row: pd.Series) -> bool:
+    """True only when official reconciliation explicitly resolved the security by Caja code."""
+    method=_norm(row.get("official_match_method"))
+    return method == "MATCH_BY_CAJA_CODE"
+
+
 def apply_geography_eligibility(frame: pd.DataFrame, policy: dict[str, Any]) -> pd.DataFrame:
     """V2.1 mandate: US-traded underlying and issuer origin in US or Europe.
 
-    Issuer origin comes from Banco Comafi's official ``País`` / ``País de Origen``.
-    Corporate issuers with unknown or non-US/non-European origins fail closed.
-    US-listed fund vehicles are admitted by their verified US listing because Comafi
-    commonly leaves corporate country-of-origin blank for those instruments.
-    IWDA remains the sole explicit mandate exception.
+    Issuer origin normally comes from Banco Comafi's official ``País`` / ``País de Origen``.
+    By explicit user mandate, an otherwise eligible US-traded security whose country is blank
+    may also be admitted when its official identity was reconciled specifically by Código Caja.
+    This is recorded as a separate auditable eligibility reason and does not infer a country.
+    US-listed fund vehicles are admitted by their verified US listing when Comafi leaves country blank.
+    IWDA remains the sole explicit ticker-level mandate exception.
     """
     out=frame.copy()
     countries={_norm(k):str(v) for k,v in (policy.get("allowed_issuer_countries") or {}).items()}
@@ -61,13 +68,12 @@ def apply_geography_eligibility(frame: pd.DataFrame, policy: dict[str, Any]) -> 
         normalized_countries.append(country)
         if ticker in exceptions or bool(row.get("mandate_exception",False)):
             geo_ok.append(True); geo_reason.append(reasons.get("mandate_exception","EXPLICIT_USER_MANDATE_EXCEPTION")); regions.append("MANDATE_EXCEPTION"); continue
-        # Exchange is an independent hard gate and is evaluated before country.
         if exchange not in allowed_exchanges:
             geo_ok.append(False); geo_reason.append(reasons.get("exchange_outside_mandate","UNDERLYING_NOT_US_TRADED")); regions.append(countries.get(country)); continue
-        # Funds are vehicles rather than corporate issuers. A verified US listing is
-        # sufficient when Comafi has no country-of-origin value for the vehicle.
         if not country and instrument_type in fund_types:
             geo_ok.append(True); geo_reason.append(reasons.get("us_listed_fund","US_LISTED_FUND_VEHICLE")); regions.append("UNITED_STATES_FUND_VEHICLE"); continue
+        if not country and _is_caja_reconciled(row):
+            geo_ok.append(True); geo_reason.append(reasons.get("caja_reconciled_unknown_country","CAJA_CODE_RECONCILED_USER_MANDATE")); regions.append("CAJA_RECONCILED_COUNTRY_UNKNOWN"); continue
         region=countries.get(country)
         if not country:
             geo_ok.append(False); geo_reason.append(reasons.get("country_unknown","ISSUER_COUNTRY_UNVERIFIED")); regions.append(None); continue
