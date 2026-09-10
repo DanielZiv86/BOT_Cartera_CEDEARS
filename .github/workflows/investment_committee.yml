@@ -43,6 +43,9 @@ jobs:
           assert r['g4_run_id']==int('${{ inputs.g4_run_id }}')==g['g4_run_id'],(r,g)
           for k in ('e2e_run_id','universe_run_id','research_run_id','valuation_run_id','local_market_run_id','portfolio_run_id','g4_run_id'):
               assert r.get(k)==g.get(k),(k,r,g)
+          assert g.get('scenario_methodology_version')=='SCENARIO-2.2',g
+          assert g.get('g4_methodology_version')=='G4-2.1',g
+          assert g.get('handoff')=='CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',g
           PY
       - name: Build Committee decision and persist Shadow Book
         run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee
@@ -55,21 +58,33 @@ jobs:
           s=json.load(open('data/canonical/committee/shadow_book.json'))
           g=json.load(open('data/upstream_g4/g4_manifest.json'))
           r=json.load(open('data/upstream_risk/decisional_risk.json'))
-
-          # Generic current-run certification. Never pin historical run IDs.
-          assert l['canonical_eligible_universe_count']==304,l
+          gl=json.load(open('data/upstream_g4/e2e_lineage.json'))
+          eligible=int(l.get('canonical_eligible_universe_count',0) or 0)
+          assert eligible > 0,l
+          assert eligible == int(gl.get('canonical_eligible_universe_count',0) or 0),(l,gl)
+          assert int(l.get('top_n',0) or 0)==30,l
+          assert len(l.get('topn_tickers',[]))==30,l
           for k in ('universe_run_id','research_run_id','valuation_run_id','local_market_run_id','portfolio_run_id','g4_run_id','decisional_risk_run_id','committee_run_id'):
               assert int(l.get(k,0)) > 0,(k,l)
           assert l['g4_run_id']==int('${{ inputs.g4_run_id }}'),l
           assert l['decisional_risk_run_id']==int('${{ inputs.risk_run_id }}'),l
           assert l['committee_run_id']==int('${{ github.run_id }}'),l
           assert l['decision_persisted'] is True,l
-
-          # G4-2.0 completeness means all 30 candidates are explicitly accounted for.
-          # Data gaps are a valid fail-closed state, not a reason to invalidate lineage.
+          scenario_review_count=int(l.get('scenario_review_count',0) or 0)
+          scenario_validated_count=int(l.get('scenario_validated_count',0) or 0)
+          scenario_blocked_count=int(l.get('scenario_blocked_count',0) or 0)
+          assert scenario_review_count==30,l
+          assert scenario_validated_count + scenario_blocked_count == scenario_review_count,l
+          assert l.get('scenario_methodology_version') == 'SCENARIO-2.2',l
+          assert l.get('g4_methodology_version') == 'G4-2.1',l
+          assert l.get('handoff') == 'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH',l
+          assert g.get('methodology_version') == 'G4-2.1',g
+          assert g.get('scenario_methodology_version') == 'SCENARIO-2.2',g
           ticker_count=int(g.get('ticker_count',0) or 0)
           evaluated=int(g.get('evaluated_count',0) or 0)
           blocked=int(g.get('blocked_count',0) or 0)
+          passes=int(g.get('pass_count',0) or 0)
+          fails=int(g.get('fail_count',0) or 0)
           accounted=int(g.get('accounted_count', evaluated + blocked) or 0)
           assert ticker_count==30,g
           assert evaluated + blocked == ticker_count,g
@@ -80,26 +95,26 @@ jobs:
               assert g.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',g
               assert g.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',g
               assert c['decision'] == 'HOLD_CASH_NO_ACTION',c
-              assert c.get('rationale') == 'SCENARIO_DATA_GAPS_FAIL_CLOSED',c
-
+              if passes==0 and evaluated>0 and fails==evaluated:
+                  assert c.get('rationale') == 'NO_CANDIDATE_BEATS_CASH_HURDLE',c
+                  assert 'SCENARIO_DATA_GAPS_FAIL_CLOSED' in c.get('secondary_considerations',[]),c
+              else:
+                  assert c.get('rationale') == 'SCENARIO_DATA_GAPS_FAIL_CLOSED',c
           assert r['risk_status']=='PASS',r
           assert r['risk_veto']=='NO',r
           assert c['fabricated_trade_count']==0,c
           assert s['e2e_run_id']==l['e2e_run_id'],(s,l)
           assert s['committee_run_id']==l['committee_run_id'],(s,l)
           assert s['order_count']==len(s.get('orders',[])),s
-
           if c['decision']=='HOLD_CASH_NO_ACTION':
               assert s['order_count']==0,s
           elif c['decision']=='CANDIDATES_REQUIRE_EXECUTION_GATE':
-              # Committee may surface candidates, but this layer must never fabricate orders.
               assert c['g4_pass_count']>0,c
               assert s['order_count']==0,s
               assert c['new_trades']==[],c
           else:
               raise AssertionError(('UNKNOWN_COMMITTEE_DECISION',c))
-
-          print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'lineage':l},indent=2))
+          print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'rationale':c['rationale'],'canonical_eligible_universe_count':eligible,'scenario_validated_count':scenario_validated_count,'scenario_blocked_count':scenario_blocked_count,'scenario_methodology_version':l['scenario_methodology_version'],'g4_methodology_version':l['g4_methodology_version'],'lineage':l},indent=2))
           PY
       - name: Upload Committee and final lineage artifacts
         uses: actions/upload-artifact@v4

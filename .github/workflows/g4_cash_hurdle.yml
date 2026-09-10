@@ -28,17 +28,19 @@ jobs:
       - name: Download exact dispatched valuation artifact
         run: |
           VAL_RUN_ID="${{ inputs.valuation_run_id }}"
-          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId)
+          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
           test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios"
           test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
           echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_valuation
           gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
           python - <<'PY'
           import json,pandas as pd
-          d=json.load(open('data/upstream_valuation/e2e_lineage.json'));v=pd.read_parquet('data/upstream_valuation/valuation_scenarios.parquet');top={str(x).upper() for x in d['topn_tickers']}
+          d=json.load(open('data/upstream_valuation/e2e_lineage.json'));v=pd.read_parquet('data/upstream_valuation/deep_scenario_review_v2_1.parquet');top={str(x).upper() for x in d['topn_tickers']}
           assert d['top_n']==30 and len(top)==30 and d['valuation_count']==30 and len(v)==30
           assert set(v['cedear_ticker'].astype(str).str.upper())==top
+          assert int(v['scenario_validated'].fillna(False).astype(bool).sum())==28
           assert d.get('local_market_run_id') and d.get('portfolio_run_id')
           PY
       - name: Download lineage-pinned layers
@@ -61,18 +63,21 @@ jobs:
               assert len(m)==1,(path,t,m);assert m[0] not in sel;sel.append(m[0])
             o=df.loc[sel].copy().reset_index(drop=True);o[col]=top;assert len(o)==30 and o[col].nunique()==30;o.to_parquet(path,index=False)
           PY
-      - name: Build Deep Scenario Review and G4 Cash Hurdle
+      - name: Build G4 Cash Hurdle from certified V2.2 scenarios
         run: |
-          python -m src.orchestration.build_g4_cash_hurdle --local-market data/upstream_local/cedear_local_market.parquet --valuation-inputs data/upstream_valuation/valuation_scenarios.parquet --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet --positions data/upstream_portfolio/portfolio_positions.parquet --policy config/g4_policy.yml --scenario-policy config/scenario_review_policy.yml --output-dir data/canonical/g4 --brokerage-rate 0.006
+          python -m src.orchestration.build_g4_cash_hurdle --local-market data/upstream_local/cedear_local_market.parquet --valuation-inputs data/upstream_valuation/deep_scenario_review_v2_1.parquet --certified-scenario-review --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet --positions data/upstream_portfolio/portfolio_positions.parquet --policy config/g4_policy.yml --scenario-policy config/scenario_review_policy.yml --output-dir data/canonical/g4 --brokerage-rate 0.006
           python - <<'PY'
           import json
           from pathlib import Path
           d=json.load(open('data/upstream_valuation/e2e_lineage.json'));m=json.load(open('data/canonical/g4/g4_manifest.json'))
+          assert m['methodology_version']=='G4-2.1',m
+          assert m['scenario_methodology_version']=='SCENARIO-2.2',m
           assert m['scenario_review_count']==30,m
-          assert m['scenario_validated_count']+m['scenario_blocked_count']==30,m
+          assert m['scenario_validated_count']==28 and m['scenario_blocked_count']==2,m
+          assert m.get('certified_scenario_review_consumed') is True,m
           assert m['ticker_count']==30 and m['evaluated_count']+m['blocked_count']==30,m
           assert m.get('g4_accounting_complete') is True,m
-          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'handoff':'VALUATION_EXACT_RUN_DISPATCH'})
+          d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'scenario_methodology_version':m['scenario_methodology_version'],'g4_methodology_version':m['methodology_version'],'handoff':'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH'})
           Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
       - name: Upload G4 artifacts
@@ -81,5 +86,5 @@ jobs:
           name: valuation-g4-cash-hurdle
           path: data/canonical/g4/
           if-no-files-found: error
-      - name: Dispatch decisional Risk with exact G4 run
-        run: gh workflow run decisional_risk.yml -f g4_run_id=${{ github.run_id }}
+      - name: Dispatch decisional Risk with exact G4 run on same ref
+        run: gh workflow run decisional_risk.yml --ref "${GITHUB_REF_NAME}" -f g4_run_id=${{ github.run_id }}

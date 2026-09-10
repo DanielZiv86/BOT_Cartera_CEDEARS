@@ -66,7 +66,7 @@ class FinnhubConnector:
                     f"{self.base_url}{endpoint}",
                     params={**params, "token": self.token},
                     timeout=self.timeout,
-                    headers={"User-Agent": "CEDEAR-Valuation-Engine/1.5"},
+                    headers={"User-Agent": "CEDEAR-Valuation-Engine/2.1"},
                 )
                 self._request_count += 1
                 self._last_call = time.monotonic()
@@ -103,15 +103,18 @@ class FinnhubConnector:
         raise FinnhubError(str(last_error or "FINNHUB_REQUEST_FAILED"))
 
     def symbol_search(self, query: str) -> list[dict[str, Any]]:
-        """Search Finnhub's canonical symbol catalogue.
-
-        Used by ETF look-through to resolve issuer tickers from non-US exchanges.
-        The caller must still validate a candidate by obtaining a usable quote and
-        fresh analyst target; search results alone are never accepted as evidence.
-        """
         data = self._get("/search", q=str(query).strip())
         rows = data.get("result") if isinstance(data, dict) else None
         return [r for r in (rows or []) if isinstance(r, dict)]
+
+    def company_profile(self, symbol: str) -> dict[str, Any]:
+        """Return company profile evidence used for issuer domicile/identity.
+
+        The profile country is issuer metadata; it must not be inferred from the
+        exchange on which an ADR/ADS happens to trade.
+        """
+        data = self._get("/stock/profile2", symbol=self._provider_symbol(symbol))
+        return data if isinstance(data, dict) else {}
 
     def price_target(self, symbol: str) -> dict[str, Any]:
         data = self._get("/stock/price-target", symbol=self._provider_symbol(symbol))

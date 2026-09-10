@@ -160,7 +160,8 @@ def test_equity_ready_when_consensus_is_fresh_and_fundamentals_are_attached():
     assert row["bull_probability"] == 0.25
     assert row["base_probability"] == 0.50
     assert row["bear_probability"] == 0.25
-    assert row["enrichment_status"] == "FUNDAMENTALS_ATTACHED_FOR_DEEP_SCENARIO_REVIEW"
+    # V2 contract: equity fundamentals are enriched by the sector-aware layer.
+    assert row["enrichment_status"] == "SECTOR_AWARE_FUNDAMENTALS_ATTACHED"
     assert row["fundamental_eps_normalized"] == 8.0
     assert row["fundamental_pe_normalized"] == 12.5
     assert row["fundamental_eps_growth_3y"] == 7.0

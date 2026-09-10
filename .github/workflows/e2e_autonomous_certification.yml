@@ -17,27 +17,24 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      E2E_REF: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Create immutable E2E identity
-        run: echo "E2E_CERT_ROOT=${GITHUB_RUN_ID}"
+        run: |
+          echo "E2E_CERT_ROOT=${GITHUB_RUN_ID}"
+          echo "E2E_REF=${E2E_REF}"
       - name: Run deterministic serialized upstream chain
         run: |
           set -euo pipefail
           dispatch_wait () {
-            WF="$1"; OUT="$2"
-            BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            gh workflow run "$WF" --ref main
-            ID=""
+            WF="$1"; OUT="$2"; BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            gh workflow run "$WF" --ref "$E2E_REF"; ID=""
             for i in $(seq 1 30); do
-              ID=$(gh run list --workflow "$WF" --event workflow_dispatch --branch main --limit 20 --json databaseId,createdAt --jq '[.[] | select(.createdAt >= "'"$BEFORE"'")][0].databaseId // empty')
-              [ -n "$ID" ] && break
-              sleep 2
+              ID=$(gh run list --workflow "$WF" --event workflow_dispatch --branch "$E2E_REF" --limit 20 --json databaseId,createdAt --jq '[.[] | select(.createdAt >= "'"$BEFORE"'")][0].databaseId // empty')
+              [ -n "$ID" ] && break; sleep 2
             done
-            test -n "$ID"
-            echo "$ID" > "$OUT"
-            echo "$WF -> $ID"
-            gh run watch "$ID" --exit-status
+            test -n "$ID"; echo "$ID" > "$OUT"; echo "$WF [$E2E_REF] -> $ID"; gh run watch "$ID" --exit-status
           }
           dispatch_wait build_universe.yml universe_run_id.txt
           dispatch_wait underlying_prices.yml price_run_id.txt
@@ -55,30 +52,34 @@ jobs:
           wait_child () {
             WF="$1"; AFTER="$2"; OUT="$3"; ID=""
             for i in $(seq 1 90); do
-              ID=$(gh run list --workflow "$WF" --event workflow_dispatch --branch main --limit 20 --json databaseId,createdAt,status --jq '[.[] | select(.createdAt >= "'"$AFTER"'")][0].databaseId // empty')
-              if [ -n "$ID" ]; then
-                gh run watch "$ID" --exit-status; echo "$ID" > "$OUT"; return 0
-              fi
+              ID=$(gh run list --workflow "$WF" --event workflow_dispatch --branch "$E2E_REF" --limit 20 --json databaseId,createdAt,status --jq '[.[] | select(.createdAt >= "'"$AFTER"'")][0].databaseId // empty')
+              if [ -n "$ID" ]; then gh run watch "$ID" --exit-status; echo "$ID" > "$OUT"; return 0; fi
               sleep 5
             done
             return 1
           }
           wait_child g4_cash_hurdle.yml "$AFTER" g4_run_id.txt
-          G=$(cat g4_run_id.txt); GA=$(gh run view "$G" --json createdAt --jq .createdAt)
-          wait_child decisional_risk.yml "$GA" risk_run_id.txt
-          D=$(cat risk_run_id.txt); DA=$(gh run view "$D" --json createdAt --jq .createdAt)
-          wait_child investment_committee.yml "$DA" committee_run_id.txt
+          G=$(cat g4_run_id.txt); GA=$(gh run view "$G" --json createdAt --jq .createdAt); wait_child decisional_risk.yml "$GA" risk_run_id.txt
+          D=$(cat risk_run_id.txt); DA=$(gh run view "$D" --json createdAt --jq .createdAt); wait_child investment_committee.yml "$DA" committee_run_id.txt
+      - name: Certify every workflow executed on the V2.1 ref
+        run: |
+          set -euo pipefail
+          for F in universe_run_id.txt price_run_id.txt history_run_id.txt market_features_run_id.txt correlation_risk_run_id.txt portfolio_run_id.txt local_market_run_id.txt research_run_id.txt valuation_run_id.txt g4_run_id.txt risk_run_id.txt committee_run_id.txt; do
+            ID=$(cat "$F"); BRANCH=$(gh run view "$ID" --json headBranch --jq .headBranch)
+            test "$BRANCH" = "$E2E_REF" || { echo "REF_MISMATCH $F run=$ID branch=$BRANCH expected=$E2E_REF"; exit 1; }
+          done
+          echo "SAME_REF_CHAIN=PASS ref=$E2E_REF"
       - name: Download final Committee artifact and certify full lineage
         run: |
           U=$(cat universe_run_id.txt); R=$(cat research_run_id.txt); V=$(cat valuation_run_id.txt); G=$(cat g4_run_id.txt); D=$(cat risk_run_id.txt); C=$(cat committee_run_id.txt)
-          mkdir -p final
-          gh run download "$C" --name investment-committee-decision --dir final
-          python - "$U" "$R" "$V" "$G" "$D" "$C" <<'PY'
+          mkdir -p final; gh run download "$C" --name investment-committee-decision --dir final
+          python - "$U" "$R" "$V" "$G" "$D" "$C" "$E2E_REF" <<'PY'
           import json,sys
-          u,r,v,g,d,c=map(int,sys.argv[1:]); l=json.load(open('final/e2e_lineage.json')); dec=json.load(open('final/committee_decision.json')); shadow=json.load(open('final/shadow_book.json'))
-          assert l['universe_run_id']==u,(l,u); assert l['research_run_id']==r,(l,r); assert l['valuation_run_id']==v,(l,v); assert l['g4_run_id']==g,(l,g); assert l['decisional_risk_run_id']==d,(l,d); assert l['committee_run_id']==c,(l,c)
-          assert l['canonical_eligible_universe_count']==304,l; assert l['decisional_risk_status']=='PASS',l; assert l['decision_persisted'] is True,l; assert dec['fabricated_trade_count']==0,dec; assert shadow['status'] in ('NO_ACTION_PERSISTED','ACTION_PERSISTED'),shadow
-          print(json.dumps({'AUTONOMOUS_E2E':'PASS','lineage':l,'decision':dec['decision']},indent=2))
+          u,r,v,g,d,c=map(int,sys.argv[1:7]); ref=sys.argv[7]; l=json.load(open('final/e2e_lineage.json')); dec=json.load(open('final/committee_decision.json')); shadow=json.load(open('final/shadow_book.json'))
+          assert l['universe_run_id']==u,(l,u); assert l['research_run_id']==r,(l,r); assert l['valuation_run_id']==v,(l,v); assert l['g4_run_id']==g,(l,g); assert l['decisional_risk_run_id']==d,(l,d); assert l['committee_run_id']==c,(l,c); assert l.get('e2e_ref')==ref,(l,ref)
+          n=int(l['canonical_eligible_universe_count']); assert 0<n<304,("V2.1 geography-filtered denominator expected below prior 304",l)
+          assert l['decisional_risk_status']=='PASS',l; assert l['decision_persisted'] is True,l; assert dec['fabricated_trade_count']==0,dec; assert shadow['status'] in ('NO_ACTION_PERSISTED','ACTION_PERSISTED'),shadow
+          print(json.dumps({'AUTONOMOUS_E2E_V2_1':'PASS','same_ref':ref,'geography_filtered_eligible_count':n,'lineage':l,'decision':dec['decision']},indent=2))
           PY
       - name: Persist autonomous certification evidence
         uses: actions/upload-artifact@v4

@@ -36,13 +36,14 @@ def _ensure_identity_schema(frame: pd.DataFrame) -> pd.DataFrame:
     if out.columns.duplicated().any():
         duplicates=sorted(set(str(c) for c in out.columns[out.columns.duplicated(keep=False)]))
         raise RuntimeError(f"OFFICIAL_SCHEMA_ERROR: duplicate normalized columns: {duplicates}")
-    defaults={"program_name":"","cedear_byma_symbol":"","underlying_symbol":"","caja_code":"","isin_cedear":"","official_issuer":"","official_source_url":"","official_source_kind":""}
+    defaults={"program_name":"","cedear_byma_symbol":"","underlying_symbol":"","caja_code":"","isin_cedear":"","country_of_origin":"","underlying_market_official":"","industry_sector_official":"","official_issuer":"","official_source_url":"","official_source_kind":""}
     for col,default in defaults.items():
         if col not in out.columns: out[col]=default
     out["cedear_byma_symbol"]=out["cedear_byma_symbol"].map(_norm_symbol)
     out["underlying_symbol"]=out["underlying_symbol"].map(_norm_symbol)
     out["caja_code"]=out["caja_code"].map(_norm)
     out["isin_cedear"]=out["isin_cedear"].map(lambda x:_norm(x).upper())
+    for col in ("country_of_origin","underlying_market_official","industry_sector_official"): out[col]=out[col].map(_norm)
     return out
 
 def _rename_identity_columns(table: pd.DataFrame, issuer: str) -> pd.DataFrame:
@@ -59,6 +60,9 @@ def _rename_identity_columns(table: pd.DataFrame, issuer: str) -> pd.DataFrame:
         if "símbolo byma" in key or "simbolo byma" in key or ((("identificación" in key or "identificacion" in key) and "mercado" in key) or "id de mercado" in key): rename[col]="cedear_byma_symbol"
         elif "denomin" in key or ("programa" in key and "cedear" in key): rename[col]="program_name"
         elif "ticker" in key and ("origen" in key or "mercado" in key): rename[col]="underlying_symbol"
+        elif key in {"país","pais","país de origen","pais de origen"}: rename[col]="country_of_origin"
+        elif key in {"mercado de valor subyacente","mercado de origen"}: rename[col]="underlying_market_official"
+        elif key in {"industria o sector","industria","sector"}: rename[col]="industry_sector_official"
         elif ("código caja" in key or "codigo caja" in key) and not is_underlying: rename[col]="caja_code"
         elif "isin" in key and "cedear" in key and not is_underlying: rename[col]="isin_cedear"
     return table.rename(columns=rename)
@@ -77,7 +81,8 @@ def _parse_identity_tables(url: str, issuer: str, kind: str, min_rows: int=5) ->
         out.loc[out["program_name"].eq(""),"program_name"]=out["cedear_byma_symbol"]
         out.loc[out["underlying_symbol"].eq(""),"underlying_symbol"]=out["cedear_byma_symbol"]
         out["official_issuer"]=issuer; out["official_source_url"]=url; out["official_source_kind"]=kind
-        candidates.append(out[["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear","official_issuer","official_source_url","official_source_kind"]])
+        cols=["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear","country_of_origin","underlying_market_official","industry_sector_official","official_issuer","official_source_url","official_source_kind"]
+        candidates.append(out[cols])
     if not candidates: raise RuntimeError(f"OFFICIAL_PARSE_ERROR: identity catalogue not found at {url}")
     combined=pd.concat(candidates,ignore_index=True)
     combined["_key"]=combined.apply(lambda r:f"CAJA:{r.caja_code}" if _norm(r.caja_code) else (f"ISIN:{r.isin_cedear}" if _norm(r.isin_cedear) else f"SYM:{_norm_symbol(r.cedear_byma_symbol)}"),axis=1)
@@ -98,6 +103,7 @@ def fetch_comafi_programs() -> pd.DataFrame:
         if d is not None:
             if _norm_symbol(d.cedear_byma_symbol): rec["cedear_byma_symbol"]=_norm_symbol(d.cedear_byma_symbol)
             if _norm_symbol(d.underlying_symbol): rec["underlying_symbol"]=_norm_symbol(d.underlying_symbol)
+            if not _norm(rec.get("underlying_market_official")) and _norm(d.underlying_market_official): rec["underlying_market_official"]=_norm(d.underlying_market_official)
             rec["official_source_kind"]="COMAFI_FULL_CATALOG_PLUS_DETAIL_BY_CAJA"
         rows.append(rec)
     return _ensure_identity_schema(pd.DataFrame(rows))
@@ -114,7 +120,7 @@ def _coalesce_official_identity_rows(frame: pd.DataFrame) -> pd.DataFrame:
     rows=[]
     for _,group in frame[frame["_key"].ne("SYM:")].groupby("_key",sort=False):
         rec={}
-        for col in ["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear"]:
+        for col in ["program_name","cedear_byma_symbol","underlying_symbol","caja_code","isin_cedear","country_of_origin","underlying_market_official","industry_sector_official"]:
             values=[_norm(v) for v in group[col].tolist() if _norm(v)]; rec[col]=values[0] if values else ""
         for col in ["official_issuer","official_source_url","official_source_kind"]:
             values=[]
@@ -157,18 +163,23 @@ def reconcile_official_identity(source: pd.DataFrame,audit: OfficialUniverseAudi
         if underlying in by_underlying: return by_underlying[underlying],"MATCH_BY_UNDERLYING_SYMBOL"
         if local in ambiguous: return None,"AMBIGUOUS_LEGACY_SYMBOL"
         if local in by_underlying: return by_underlying[local],"MATCH_BY_LEGACY_UNDERLYING_SYMBOL"
-        # Some current official catalogue rows expose stable Caja/ISIN identity but omit the
-        # local symbol. Only hydrate from the source ticker when the canonical source itself
-        # carries an explicit official/BYMA validation marker (or an explicit mandate exception).
         stable_identity=(bool(caja) and caja in official_cajas) or (bool(isin) and isin in official_isins)
         source_verified=str(row.get("caja_byma_status","")).upper() in {"VALIDATED_BYMA_LAUNCH","VALIDATED_OFFICIAL_IDENTITY","VALIDATED_BYMA"}
         mandate=bool(row.get("mandate_exception",False))
         if stable_identity and local and (source_verified or mandate): return local,"MATCH_BY_VERIFIED_STABLE_IDENTITY_SOURCE_SYMBOL"
         return None,"NO_STRUCTURED_OFFICIAL_IDENTITY_MATCH"
-    resolved=out.apply(resolve,axis=1); out["legacy_cedear_ticker"]=out["cedear_ticker"].astype(str).str.upper(); out["cedear_byma_symbol"]=resolved.map(lambda x:x[0]); out["official_match_method"]=resolved.map(lambda x:x[1]); out["comafi_program_active"]=out["cedear_byma_symbol"].notna(); out["byma_tradability_status"]="BYMA_UNRESOLVED"
-    confirmed=out["cedear_byma_symbol"].map(lambda s:bool(s) and (_norm_symbol(s) in audit.byma_symbols))
-    source_stable=out["official_match_method"].eq("MATCH_BY_VERIFIED_STABLE_IDENTITY_SOURCE_SYMBOL")
-    confirmed=confirmed | source_stable
+    resolved=out.apply(resolve,axis=1); out["legacy_cedear_ticker"]=out["cedear_ticker"].astype(str).str.upper(); out["cedear_byma_symbol"]=resolved.map(lambda x:x[0]); out["official_match_method"]=resolved.map(lambda x:x[1])
+    def official_map(col):
+        result={}
+        for symbol,group in official[official["cedear_byma_symbol"].ne("")].groupby("cedear_byma_symbol"):
+            values=[_norm(v) for v in group[col] if _norm(v)]
+            if values: result[_norm_symbol(symbol)]=values[0]
+        return result
+    for col in ("country_of_origin","underlying_market_official","industry_sector_official"):
+        mapping=official_map(col); out[col]=out["cedear_byma_symbol"].map(lambda s:mapping.get(_norm_symbol(s),""))
+    out["issuer_country_source"]="COMAFI_COUNTRY_OF_ORIGIN"; out["underlying_market_source"]="COMAFI_MARKET_OF_UNDERLYING"; out["industry_sector_source"]="COMAFI_INDUSTRY_OR_SECTOR"
+    out["comafi_program_active"]=out["cedear_byma_symbol"].notna(); out["byma_tradability_status"]="BYMA_UNRESOLVED"
+    confirmed=out["cedear_byma_symbol"].map(lambda s:bool(s) and (_norm_symbol(s) in audit.byma_symbols)); source_stable=out["official_match_method"].eq("MATCH_BY_VERIFIED_STABLE_IDENTITY_SOURCE_SYMBOL"); confirmed=confirmed | source_stable
     out.loc[confirmed,"byma_tradability_status"]="BYMA_CONFIRMED"; out["byma_tradable"]=out["byma_tradability_status"].eq("BYMA_CONFIRMED"); out["official_identity_verified_at"]=audit.verified_at; out["byma_evidence_mode"]=audit.byma_evidence_mode; out["official_identity_status"]="OFFICIAL_RECONCILIATION_UNRESOLVED"; out.loc[out["comafi_program_active"] & out["byma_tradable"],"official_identity_status"]="OFFICIAL_ISSUER_BYMA_VERIFIED"
     mandate=out.get("mandate_exception",pd.Series(False,index=out.index)).eq(True); out.loc[mandate & ~out["byma_tradable"],"official_identity_status"]="MANDATE_EXCEPTION_NOT_BYMA_CONFIRMED"; out["eligible_for_research"]=out["eligible"].eq(True) & ((out["comafi_program_active"] & out["byma_tradable"]) | mandate); out["eligibility_reason"]=out["official_identity_status"]
     return out

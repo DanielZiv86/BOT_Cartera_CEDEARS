@@ -2,6 +2,12 @@ name: Build Canonical Valuation Scenarios
 
 on:
   workflow_dispatch:
+    inputs:
+      dispatch_g4:
+        description: "Dispatch G4 after Valuation (leave false for isolated V2.1 certification)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: valuation-scenarios-main
@@ -24,10 +30,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
-      - name: Resolve serialized certified upstreams
+      - name: Run valuation and V2.1 economic regression tests
+        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py tests/test_deep_scenario_engine.py
+      - name: Resolve serialized certified upstreams from same ref
         run: |
-          R=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId,headSha --jq '.[0].databaseId'); U=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); L=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); P=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); Q=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          R=$(gh run list --workflow weekly_screening.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); L=$(gh run list --workflow cedear_local_market.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); P=$(gh run list --workflow portfolio_state.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           for X in "$R" "$U" "$L" "$P" "$Q"; do test -n "$X" && test "$X" != null; done
           echo "RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"; echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"; echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"; echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
           mkdir -p data/upstream_research data/upstream_universe data/upstream_prices
@@ -38,23 +45,16 @@ jobs:
         run: |
           python - <<'PY'
           import json,os,pandas as pd
-          integ=json.load(open('data/upstream_research/research_integrity.json')); assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
-          r=pd.read_parquet('data/upstream_research/research_screening.parquet'); u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet'); um=json.load(open('data/upstream_universe/universe_manifest.json')); expected=int(um['canonical_eligible_count']); assert expected==304 and len(r)==expected and len(u)==expected
-          # Research ranks all 304 names, including mandate exceptions such as IWDA.
-          # Downstream Valuation/G4 must consume the explicit deployment-qualified
-          # selection, not blindly the first 30 universal ranks.
-          assert 'selected' in r.columns and 'top_n_eligibility' in r.columns
-          selected=r.loc[r['selected'].fillna(False).astype(bool)].sort_values('rank').copy()
-          assert len(selected)==30, {'selected_count':len(selected)}
-          assert selected['top_n_eligibility'].fillna(False).astype(bool).all()
-          top=selected
-          tickers=top.cedear_ticker.astype(str).str.upper().tolist()
-          assert len(set(tickers))==30
-          out=u[u.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(out)==30
-          out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
-          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
+          integ=json.load(open('data/upstream_research/research_integrity.json'))
+          assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
+          r=pd.read_parquet('data/upstream_research/research_screening.parquet'); u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet'); um=json.load(open('data/upstream_universe/universe_manifest.json')); expected=int(um['canonical_eligible_count'])
+          assert expected>0 and len(r)==expected and len(u)==expected
+          selected=r.loc[r['selected'].fillna(False).astype(bool)].sort_values('rank').copy(); assert len(selected)==30 and selected['top_n_eligibility'].fillna(False).astype(bool).all()
+          tickers=selected.cedear_ticker.astype(str).str.upper().tolist(); assert len(set(tickers))==30
+          out=u[u.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(out)==30; out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
+          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'e2e_ref':os.environ['GITHUB_REF_NAME'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
           PY
-      - name: Build Deep Research valuation
+      - name: Build VAL-1.8 screening valuation
         run: |
           python -m src.orchestration.build_valuation_scenarios --universe data/upstream_universe/research_topn_universe.parquet --underlying-prices data/upstream_prices/underlying_prices.parquet --policy config/valuation_policy.yml --etf-sources config/etf_issuer_sources.yml --non-equity-policy config/non_equity_tracker_policy.yml --output-dir data/canonical/valuation
           python - <<'PY'
@@ -63,11 +63,61 @@ jobs:
           df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet'); l=json.load(open('data/upstream_universe/e2e_lineage.json')); assert len(df)==30
           l.update({'valuation_run_id':int(os.environ['GITHUB_RUN_ID']),'price_run_id':int(os.environ['PRICE_RUN_ID']),'local_market_run_id':int(os.environ['LOCAL_RUN_ID']),'portfolio_run_id':int(os.environ['PORTFOLIO_RUN_ID']),'valuation_count':30,'triggering_workflow':'workflow_dispatch'}); Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(l,indent=2))
           PY
+      - name: Run mandatory Deep Scenario Review V2.1 on all Top-N
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          import yaml
+          from src.valuation.deep_scenario_engine import validate_scenarios
+          outdir=Path('data/canonical/valuation')
+          valuation=pd.read_parquet(outdir/'valuation_scenarios.parquet')
+          universe=pd.read_parquet('data/upstream_universe/research_topn_universe.parquet')
+          # VAL-1.8 normally carries universe metadata. Add only missing canonical fields by ticker so V2.1 has authoritative sector/country/unit metadata without overwriting valuation fields.
+          key='cedear_ticker'
+          missing=[c for c in universe.columns if c!=key and c not in valuation.columns]
+          if missing:
+              valuation=valuation.merge(universe[[key]+missing],on=key,how='left',validate='one_to_one')
+          policy=yaml.safe_load(Path('config/scenario_review_policy.yml').read_text()) or {}
+          reviewed,review_manifest=validate_scenarios(valuation,policy)
+          assert len(reviewed)==30, {'deep_review_count':len(reviewed)}
+          required=['scenario_sector_model','scenario_sector_source','economic_identity_status','scenario_review_status','scenario_review_blockers','scenario_method','identity_adr_ratio_applied','identity_fx_applied','identity_implied_to_market_ratio']
+          missing_required=[c for c in required if c not in reviewed.columns]; assert not missing_required, {'missing_audit_columns':missing_required}
+          for c in ['scenario_review_status','scenario_method']:
+              assert reviewed[c].fillna('').astype(str).str.len().gt(0).all(), {'empty_audit_column':c}
+          # Specialized ETF engines do not use equity sector/economic-identity checks; preserve explicit N/A audit states rather than fabricate them.
+          equity=reviewed['valuation_engine_type'].fillna('').astype(str).str.upper().eq('EQUITY')
+          assert reviewed.loc[equity,'scenario_sector_model'].fillna('').astype(str).str.len().gt(0).all() | (~reviewed.loc[equity,'scenario_validated'].fillna(False).astype(bool)).all()
+          reviewed.to_parquet(outdir/'deep_scenario_review_v2_1.parquet',index=False); reviewed.to_csv(outdir/'deep_scenario_review_v2_1.csv',index=False)
+          def vc(col): return {str(k):int(v) for k,v in reviewed[col].fillna('N/A').astype(str).value_counts().items()}
+          blocker_counts={}
+          for raw in reviewed['scenario_review_blockers']:
+              vals=raw if isinstance(raw,list) else ([] if raw is None or (isinstance(raw,float) and pd.isna(raw)) else [str(raw)])
+              for b in vals:
+                  b=str(b).strip()
+                  if b: blocker_counts[b]=blocker_counts.get(b,0)+1
+          audit_cols=[c for c in ['adr_shares_per_depositary_receipt','fundamental_fx_to_market','economic_unit_normalization_verified','eps_unit','target_price_unit','identity_adr_ratio_applied','identity_fx_applied','identity_implied_price','identity_implied_to_market_ratio','identity_target_unit','identity_eps_unit','identity_flags'] if c in reviewed.columns]
+          manifest={'layer':'Deep Scenario Review V2.1','methodology_version':review_manifest.get('scenario_methodology_version','SCENARIO-2.1'),'top_n_count':30,'sector_counts':vc('scenario_sector_model'),'sector_source_counts':vc('scenario_sector_source'),'economic_identity_status_counts':vc('economic_identity_status'),'scenario_review_status_counts':vc('scenario_review_status'),'blocker_counts':dict(sorted(blocker_counts.items())),'normalization_audit_columns':audit_cols,'scenario_validated_count':int(review_manifest['scenario_validated_count']),'scenario_blocked_count':int(review_manifest['scenario_blocked_count']),'g4_eligible_count':int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()),'fail_closed':True}
+          (outdir/'deep_scenario_review_v2_1_manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False)); print(json.dumps(manifest,indent=2,ensure_ascii=False))
+          PY
+      - name: Certify V2.1 audit artifact contract
+        run: |
+          python - <<'PY'
+          import json,pandas as pd
+          df=pd.read_parquet('data/canonical/valuation/deep_scenario_review_v2_1.parquet'); m=json.load(open('data/canonical/valuation/deep_scenario_review_v2_1_manifest.json'))
+          assert len(df)==30 and m['top_n_count']==30 and m['fail_closed'] is True
+          assert sum(m['scenario_review_status_counts'].values())==30 and sum(m['sector_counts'].values())==30
+          assert m['scenario_validated_count']+m['scenario_blocked_count']==30
+          assert len(m['normalization_audit_columns'])>=5, {'normalization_audit_columns':m['normalization_audit_columns']}
+          print('DEEP_SCENARIO_REVIEW_V2_1_AUDIT_CONTRACT=PASS')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: canonical-valuation-scenarios
           path: data/canonical/valuation/
           if-no-files-found: error
           retention-days: 90
-      - name: Dispatch exact G4
+      - name: Dispatch exact G4 on same ref
+        if: ${{ inputs.dispatch_g4 == true }}
         run: gh workflow run g4_cash_hurdle.yml --ref "${GITHUB_REF_NAME}" -f valuation_run_id="${GITHUB_RUN_ID}"

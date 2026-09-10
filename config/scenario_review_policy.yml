@@ -1,8 +1,75 @@
-methodology_version: SCENARIO-1.0
+methodology_version: SCENARIO-2.2
 horizon_months: 12
 
-# Fundamental equity scenarios are deliberately independent from analyst-low downside.
-equity:
+identity:
+  eps_pe_to_price_ratio_min: 0.55
+  eps_pe_to_price_ratio_max: 1.80
+  require_verified_normalization_when_units_differ: true
+  require_verified_foreign_us_traded_normalization: true
+  verified_adr_ratios:
+    BBV:
+      ordinary_shares_per_ads: 1.0
+      source: BBVA_OFFICIAL_ADR_PAGE_1_TO_1
+    HSBC:
+      ordinary_shares_per_ads: 5.0
+      source: HSBC_INVESTOR_FAQ_ADR_PROGRAM
+    ING:
+      ordinary_shares_per_ads: 1.0
+      source: ING_SEC_REGISTERED_SECURITIES_1_TO_1
+    RDS:
+      ordinary_shares_per_ads: 2.0
+      source: SHELL_ADS_FACILITY_OFFICIAL
+    SHEL:
+      ordinary_shares_per_ads: 2.0
+      source: SHELL_ADS_FACILITY_OFFICIAL
+    SAN:
+      ordinary_shares_per_ads: 1.0
+      source: SANTANDER_OFFICIAL_FAQ_1_TO_1
+    TXR:
+      ordinary_shares_per_ads: 10.0
+      source: TERNIUM_ADS_DISCLOSURE
+    TX:
+      ordinary_shares_per_ads: 10.0
+      source: TERNIUM_ADS_DISCLOSURE
+    VOD:
+      ordinary_shares_per_ads: 10.0
+      source: VODAFONE_INVESTOR_FAQ_ADR_RATIO
+    EQNR:
+      ordinary_shares_per_ads: 1.0
+      source: EQUINOR_OFFICIAL_ANNUAL_REPORT_ADS_1_TO_1
+  verified_direct_foreign_listings:
+    AEG:
+      ordinary_shares_per_us_traded_share: 1.0
+      security_type: NEW_YORK_REGISTRY_SHARE
+      source: AEGON_OFFICIAL_NEW_YORK_REGISTRY_SHARE_1_TO_1
+
+sector_classification:
+  fail_closed_when_unverified: true
+  corporate_keywords:
+    - TECHNOLOGY
+    - SOFTWARE
+    - SEMICONDUCTOR
+    - HEALTH
+    - PHARMA
+    - CONSUMER
+    - INDUSTRIAL
+    - MATERIAL
+    - COMMUNICATION
+    - TELECOM
+    - UTILITY
+    - REAL ESTATE
+    - AEROSPACE
+    - TRANSPORT
+    - RETAIL
+    - FOOD
+    - BEVERAGE
+
+sector_overrides:
+  RDS: ENERGY
+  SHEL: ENERGY
+  V: CORPORATE
+
+corporate:
   base_growth_floor: -0.10
   base_growth_cap: 0.20
   base_pe_floor: 6.0
@@ -21,13 +88,38 @@ equity:
   bull_multiple_factor: 1.12
   bull_pe_cap: 30.0
 
+financials:
+  roe_floor: 0.04
+  roe_cap: 0.22
+  cost_of_equity_anchor: 0.10
+  base_pb_anchor: 1.0
+  roe_pb_sensitivity: 3.0
+  base_pb_floor: 0.45
+  base_pb_cap: 4.00
+  observed_pb_weight: 0.65
+  fair_pb_weight: 0.35
+  consensus_base_blend: 0.20
+  bear_pb_factor: 0.72
+  bear_pb_floor: 0.35
+  bull_pb_factor: 1.20
+  bull_pb_cap: 5.00
+  minimum_bull_premium_to_base: 0.10
+
+energy:
+  base_pe_floor: 5.0
+  base_pe_cap: 14.0
+  earnings_weight: 0.65
+  normalized_fcf_yield: 0.08
+  consensus_base_blend: 0.15
+  bear_cycle_factor: 0.72
+  bull_cycle_factor: 1.28
+  dividend_credit: 0.50
+
 consensus:
   dispersion_review_threshold: 0.75
   high_distance_from_median_cap: 0.50
-
 plausibility:
   max_standard_bull_upside: 0.60
-
 probabilities:
   base_probability: 0.50
   bull_min: 0.15
@@ -36,10 +128,21 @@ probabilities:
   dispersion_bull_penalty_max: 0.07
 
 policy_notes:
+  - Economic identity is a hard precondition before scenario validation.
+  - ADR/share/FX normalization is applied to scenario fundamentals as well as identity checks; scenarios and market prices must live in the same economic unit.
+  - ADR/share normalization is applied only from explicit issuer or SEC verified mappings; ratios are never reverse-engineered from prices. A verified 1:1 ADS ratio is still recorded explicitly rather than silently assumed.
+  - Foreign issuers traded in the US fail closed unless an explicit verified ADR/ADS ratio, verified direct/New York Registry mapping, or upstream verified economic-unit normalization exists.
+  - Aegon AEG is a verified New York Registry common share, not an ADR; one NYRS equals one Amsterdam-listed common share.
+  - Equinor EQNR is a verified NYSE ADS; each ADS represents one ordinary share.
+  - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
+  - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
+  - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
+  - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
+  - Visa is routed to CORPORATE because its economics are payment-network/technology-like rather than bank balance-sheet economics.
+  - Financials use normalized BVPS, ROE, observed market P/B and a ROE-implied fair P/B anchor; conventional corporate Debt/Equity is excluded from their stress model.
+  - Financial Bull must be strictly above Base, subject to the same external plausibility cap.
+  - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Bear is generated from stressed earnings and a compressed multiple; analyst low never defines it.
-  - Base is primarily fundamental, with only a bounded 20% consensus-median blend.
-  - Bull is capped by fundamental plausibility and winsorised consensus evidence before expected return.
-  - Probabilities are dynamic and confidence/dispersion-aware rather than fixed 25/50/25.
-  - Missing material fundamental evidence fails closed as SCENARIO_NOT_VALIDATED.
-  - Expected return must be calculated only after this review.
+  - Bear is independent of analyst low; Bull remains plausibility-capped.
+  - Missing material evidence fails closed; no fallback fabricates a scenario.
+  - Expected return is calculated only after scenario review.
