@@ -28,8 +28,10 @@ jobs:
       - run: pytest -q tests/test_research_screening.py
       - name: Download serialized upstreams from same ref
         run: |
-          U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U"
-          F=$(gh run list --workflow market_features.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F"
+          U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U" && test "$U" != null
+          F=$(gh run list --workflow market_features.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F" && test "$F" != null
+          echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"
+          echo "FEATURE_RUN_ID=$F" >> "$GITHUB_ENV"
           mkdir -p data/upstream_universe data/upstream_features
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
           gh run download "$F" --name market-feature-engine --dir data/upstream_features
@@ -37,6 +39,26 @@ jobs:
         run: |
           EXPECTED=$(python -c "import json; print(json.load(open('data/upstream_universe/universe_manifest.json'))['canonical_eligible_count'])")
           python -m src.orchestration.build_research_screening --universe data/upstream_universe/cedear_universe_master.parquet --features data/upstream_features/market_features.parquet --top-n 30 --expected-count "$EXPECTED" --min-top-data-quality 60 --output-dir data/canonical/research
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          integrity=json.load(open('data/canonical/research/research_integrity.json'))
+          manifest=json.load(open('data/upstream_universe/universe_manifest.json'))
+          expected=int(manifest['canonical_eligible_count'])
+          assert integrity['status']=='PASS' and float(integrity['coverage_pct'])==100
+          assert int(integrity['universe_count'])==expected
+          lineage={
+              'research_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'universe_run_id': int(os.environ['UNIVERSE_RUN_ID']),
+              'feature_run_id': int(os.environ['FEATURE_RUN_ID']),
+              'canonical_eligible_universe_count': expected,
+              'research_screened_count': int(integrity['universe_count']),
+              'e2e_ref': os.environ['GITHUB_REF_NAME'],
+              'handoff': 'CERTIFIED_UNIVERSE_TO_RESEARCH_EXACT_RUN'
+          }
+          Path('data/canonical/research/research_lineage.json').write_text(json.dumps(lineage,indent=2))
+          print(json.dumps(lineage,indent=2))
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: research-mvp-screening
