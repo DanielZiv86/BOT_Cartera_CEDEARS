@@ -36,7 +36,8 @@ def test_v23_extreme_analyst_low_cannot_turn_probabilistic_bear_into_stress():
 
 def test_v23_stress_formula_is_retained_not_deleted():
     r=validate_scenarios(pd.DataFrame([row()]),POLICY)[0].iloc[0]
-    expected=5*(1-.18)*(20*.78)
+    extra=(.8-.75)*.08
+    expected=5*(1-(.18+extra))*(20*.78)
     assert abs(r['stress_target_price']-expected)<1e-9
     assert r['bear_target_price']>r['stress_target_price']
 
