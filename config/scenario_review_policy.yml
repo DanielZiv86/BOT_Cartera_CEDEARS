@@ -1,10 +1,11 @@
-methodology_version: SCENARIO-2.1
+methodology_version: SCENARIO-2.2
 horizon_months: 12
 
 identity:
   eps_pe_to_price_ratio_min: 0.55
   eps_pe_to_price_ratio_max: 1.80
   require_verified_normalization_when_units_differ: true
+  require_verified_foreign_us_traded_normalization: true
   verified_adr_ratios:
     BBV:
       ordinary_shares_per_ads: 1.0
@@ -33,6 +34,14 @@ identity:
     VOD:
       ordinary_shares_per_ads: 10.0
       source: VODAFONE_INVESTOR_FAQ_ADR_RATIO
+    EQNR:
+      ordinary_shares_per_ads: 1.0
+      source: EQUINOR_OFFICIAL_ANNUAL_REPORT_ADS_1_TO_1
+  verified_direct_foreign_listings:
+    AEG:
+      ordinary_shares_per_us_traded_share: 1.0
+      security_type: NEW_YORK_REGISTRY_SHARE
+      source: AEGON_OFFICIAL_NEW_YORK_REGISTRY_SHARE_1_TO_1
 
 sector_classification:
   fail_closed_when_unverified: true
@@ -122,7 +131,9 @@ policy_notes:
   - Economic identity is a hard precondition before scenario validation.
   - ADR/share/FX normalization is applied to scenario fundamentals as well as identity checks; scenarios and market prices must live in the same economic unit.
   - ADR/share normalization is applied only from explicit issuer or SEC verified mappings; ratios are never reverse-engineered from prices. A verified 1:1 ADS ratio is still recorded explicitly rather than silently assumed.
-  - Aegon AEG is not treated as an ADR; SEC filings identify AEG as New York Registry common shares listed directly on NYSE.
+  - Foreign issuers traded in the US fail closed unless an explicit verified ADR/ADS ratio, verified direct/New York Registry mapping, or upstream verified economic-unit normalization exists.
+  - Aegon AEG is a verified New York Registry common share, not an ADR; one NYRS equals one Amsterdam-listed common share.
+  - Equinor EQNR is a verified NYSE ADS; each ADS represents one ordinary share.
   - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
   - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
   - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
