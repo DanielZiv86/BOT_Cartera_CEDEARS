@@ -53,6 +53,11 @@ us_listed_fund_instrument_types:
   - EXPOSICION ESPECIAL
   - EXPOSICIÓN ESPECIAL
 
+# Explicit user mandate: if country is blank but official reconciliation resolved
+# the security specifically through Código Caja and the underlying passes the US
+# exchange gate, retain it as eligible without inventing an issuer country.
+admit_caja_reconciled_unknown_country: true
+
 # Explicit project mandate exception. It remains auditable and does not broaden
 # the rule for any other instrument.
 mandate_exceptions:
@@ -64,6 +69,7 @@ fail_closed_on_non_us_exchange: true
 reason_codes:
   eligible: ISSUER_US_OR_EUROPE_AND_US_TRADED
   us_listed_fund: US_LISTED_FUND_VEHICLE
+  caja_reconciled_unknown_country: CAJA_CODE_RECONCILED_USER_MANDATE
   country_unknown: ISSUER_COUNTRY_UNVERIFIED
   country_outside_mandate: ISSUER_OUTSIDE_US_EUROPE
   exchange_outside_mandate: UNDERLYING_NOT_US_TRADED
