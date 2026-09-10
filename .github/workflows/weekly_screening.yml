@@ -26,10 +26,10 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: pytest -q tests/test_research_screening.py
-      - name: Download serialized upstreams
+      - name: Download serialized upstreams from same ref
         run: |
-          U=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U"
-          F=$(gh run list --workflow market_features.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F"
+          U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U"
+          F=$(gh run list --workflow market_features.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F"
           mkdir -p data/upstream_universe data/upstream_features
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
           gh run download "$F" --name market-feature-engine --dir data/upstream_features
