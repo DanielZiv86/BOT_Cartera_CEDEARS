@@ -25,9 +25,9 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
-      - name: Resolve serialized certified upstreams
+      - name: Resolve serialized certified upstreams from same ref
         run: |
-          R=$(gh run list --workflow weekly_screening.yml --status success --limit 1 --json databaseId,headSha --jq '.[0].databaseId'); U=$(gh run list --workflow build_universe.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); L=$(gh run list --workflow cedear_local_market.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); P=$(gh run list --workflow portfolio_state.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId'); Q=$(gh run list --workflow underlying_prices.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          R=$(gh run list --workflow weekly_screening.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId,headSha --jq '.[0].databaseId'); U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); L=$(gh run list --workflow cedear_local_market.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); P=$(gh run list --workflow portfolio_state.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           for X in "$R" "$U" "$L" "$P" "$Q"; do test -n "$X" && test "$X" != null; done
           echo "RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"; echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"; echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"; echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
           mkdir -p data/upstream_research data/upstream_universe data/upstream_prices
@@ -40,9 +40,6 @@ jobs:
           import json,os,pandas as pd
           integ=json.load(open('data/upstream_research/research_integrity.json')); assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
           r=pd.read_parquet('data/upstream_research/research_screening.parquet'); u=pd.read_parquet('data/upstream_universe/cedear_universe_master.parquet'); um=json.load(open('data/upstream_universe/universe_manifest.json')); expected=int(um['canonical_eligible_count']); assert expected==304 and len(r)==expected and len(u)==expected
-          # Research ranks all 304 names, including mandate exceptions such as IWDA.
-          # Downstream Valuation/G4 must consume the explicit deployment-qualified
-          # selection, not blindly the first 30 universal ranks.
           assert 'selected' in r.columns and 'top_n_eligibility' in r.columns
           selected=r.loc[r['selected'].fillna(False).astype(bool)].sort_values('rank').copy()
           assert len(selected)==30, {'selected_count':len(selected)}
@@ -52,7 +49,7 @@ jobs:
           assert len(set(tickers))==30
           out=u[u.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(out)==30
           out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
-          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
+          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'e2e_ref':os.environ['GITHUB_REF_NAME'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
           PY
       - name: Build Deep Research valuation
         run: |
@@ -69,5 +66,5 @@ jobs:
           path: data/canonical/valuation/
           if-no-files-found: error
           retention-days: 90
-      - name: Dispatch exact G4
+      - name: Dispatch exact G4 on same ref
         run: gh workflow run g4_cash_hurdle.yml --ref "${GITHUB_REF_NAME}" -f valuation_run_id="${GITHUB_RUN_ID}"
