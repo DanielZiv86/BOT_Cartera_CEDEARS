@@ -1,4 +1,4 @@
-methodology_version: G4-2.0
+methodology_version: G4-2.1
 horizon_months: 12
 return_currency: USD_ECONOMIC_RETURN
 
@@ -8,13 +8,15 @@ cash_hurdle:
   capital_preservation_buffer: 0.03
   minimum_margin_over_hurdle: 0.02
 
-# Added on top of the base 2% margin for single-name equities. This makes the
-# required compensation candidate-specific rather than treating defensive and
-# idiosyncratic equities identically.
+# Added on top of the base 2% margin for single-name equities. Epistemic
+# uncertainty remains separately penalized. Downside is NOT added again here:
+# it is already represented in Bull/Base/Bear expected return and enforced by
+# the hard Bear preservation gate (-15%). The G4 sensitivity audit showed that
+# removing the duplicate downside margin does not manufacture any PASS.
 dynamic_equity_margin:
   base_equity_risk_buffer: 0.015
   uncertainty_buffer_max: 0.020
-  downside_buffer_max: 0.015
+  downside_buffer_max: 0.000
 
 risk:
   max_bear_downside: -0.15
@@ -40,10 +42,19 @@ execution:
   brokerage_rate_per_side: 0.006
   analytical_g4_is_separate_from_execution_ready: true
 
+audit_contract:
+  sensitivity_bear_limits: [-0.10, -0.15, -0.20, -0.25]
+  sensitivity_cash_hurdles: [0.05, 0.08, 0.10]
+  sensitivity_uncertainty_scales: [0.0, 0.5, 1.0]
+  sensitivity_dynamic_equity_margin: [false, true]
+  production_changes_require_economic_evidence: true
+
 policy_notes:
   - G4 consumes only post-review Bull/Base/Bear scenarios; expected return is recomputed after review.
   - Missing material scenario evidence fails closed and cannot receive G4_PASS.
-  - Single-name equities require the base margin plus dynamic equity, uncertainty and downside buffers.
+  - Single-name equities require the base margin plus dynamic equity and uncertainty buffers.
+  - Downside is represented by scenario-weighted expected return and the hard Bear preservation gate; it is not charged a third time in the dynamic equity margin.
   - Bear_Return_Net must remain above the portfolio preservation limit.
   - A projected single-name weight above 20% is a hard concentration failure.
   - Execution readiness remains separate from analytical attractiveness.
+  - Production thresholds are not relaxed merely to create deployment candidates.
