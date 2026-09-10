@@ -34,16 +34,10 @@ def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
 
 def _verified_adr(row:pd.Series,policy:dict)->tuple[float,bool,str|None]:
     direct=_num(row.get('adr_shares_per_depositary_receipt'))
-    if direct is not None and direct>0 and bool(row.get('economic_unit_normalization_verified',False)):
-        return direct,True,str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA')
-    ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper(); identity=policy.get('identity',{}) or {}
-    entry=(identity.get('verified_adr_ratios',{}) or {}).get(ticker)
+    if direct is not None and direct>0:return direct,bool(row.get('economic_unit_normalization_verified',False)),str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA')
+    ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper(); entry=((policy.get('identity',{}) or {}).get('verified_adr_ratios',{}) or {}).get(ticker)
     if isinstance(entry,dict):
         ratio=_num(entry.get('ordinary_shares_per_ads'))
-        if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source'])
-    entry=(identity.get('verified_direct_foreign_listings',{}) or {}).get(ticker)
-    if isinstance(entry,dict):
-        ratio=_num(entry.get('ordinary_shares_per_us_traded_share'))
         if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source'])
     return 1.0,False,None
 
@@ -56,20 +50,19 @@ def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,An
     if ratio is None:blockers.append('ECONOMIC_IDENTITY_UNVERIFIABLE')
     elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{identity_method}_UNIT_MISMATCH')
     if not str(row.get('underlying_ticker') or '').strip():blockers.append('ECONOMIC_IDENTITY_UNDERLYING_MISSING')
-    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); upstream_verified=bool(row.get('economic_unit_normalization_verified',False)); normalization_verified=upstream_verified or adr_verified
+    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); normalization_verified=bool(row.get('economic_unit_normalization_verified',False)) or adr_verified
     if target!=eps_unit and not normalization_verified:blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
-    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS'); us_market=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
-    if bool(cfg.get('require_verified_foreign_us_traded_normalization',True)) and non_us and us_market and not normalization_verified:
+    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
+    us_traded=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
+    if non_us and us_traded and not normalization_verified:
         blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED')
-    if non_us and us_market and not normalization_verified:flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
-    if adr_verified:
-        flags.append('VERIFIED_FOREIGN_SECURITY_UNIT_MAPPING_APPLIED')
-        if adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
+        flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    if adr_verified and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
+    if adr_verified and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
     if identity_method=='PB':flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')
     status='VERIFIED_NORMALIZED' if not blockers else 'BLOCKED'; return not blockers,blockers,{'economic_identity_status':status,'economic_identity_method':identity_method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':adr_verified,'identity_adr_ratio_source':adr_source,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
 
 def _scenario_unit_row(row:pd.Series,meta:dict)->pd.Series:
-    """Put per-share fundamentals into the same traded-security unit used by targets/current price."""
     r=row.copy(); adr=_num(meta.get('identity_adr_ratio_applied')) or 1.0; fx=_num(meta.get('identity_fx_applied')) or 1.0; factor=adr*fx
     if factor<=0:raise ValueError('SCENARIO_ECONOMIC_UNIT_NORMALIZATION_INVALID')
     for c in ('fundamental_eps_normalized','fundamental_book_value_per_share','book_value_per_share'):
@@ -138,3 +131,17 @@ def review_scenarios(df:pd.DataFrame,policy:dict)->pd.DataFrame:
         else:
             out=row.to_dict(); out.update(scenario_validated=True,scenario_review_status='SCENARIO_VALIDATED',scenario_review_blockers=[],scenario_review_flags=['NON_EQUITY_TRACKER_RETAINED'],scenario_method='NON_EQUITY_TRACKER_V1'); rows.append(out)
     return pd.DataFrame(rows)
+
+
+def validate_scenarios(df:pd.DataFrame,policy:dict)->tuple[pd.DataFrame,dict[str,Any]]:
+    """Compatibility contract used by regression tests and orchestration audits."""
+    reviewed=review_scenarios(df,policy)
+    validated=int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()) if 'scenario_validated' in reviewed.columns else 0
+    total=int(len(reviewed))
+    manifest={
+        'methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),
+        'scenario_review_count':total,
+        'scenario_validated_count':validated,
+        'scenario_blocked_count':total-validated,
+    }
+    return reviewed,manifest
