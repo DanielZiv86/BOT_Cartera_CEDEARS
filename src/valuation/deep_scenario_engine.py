@@ -12,15 +12,49 @@ def _num(v: Any) -> float | None:
 def _rate(v: Any) -> float | None:
     x=_num(v); return None if x is None else (x/100.0 if abs(x)>1.5 else x)
 
-def _clip(x: float,lo: float,hi: float)->float: return max(lo,min(hi,x))
+def _clip(x:float,lo:float,hi:float)->float: return max(lo,min(hi,x))
 def _first_num(row:pd.Series,*names:str)->float|None:
     for n in names:
         x=_num(row.get(n))
         if x is not None:return x
     return None
 
+
 def _dynamic_probabilities(confidence:float,dispersion:float,policy:dict)->tuple[float,float,float]:
-    p=policy.get('probabilities',{}) or {}; base=float(p.get('base_probability',.50)); lo=float(p.get('bull_min',.15)); hi=float(p.get('bull_max',.27)); penalty=min(max(dispersion-float(p.get('dispersion_penalty_start',.50)),0.),1.)*float(p.get('dispersion_bull_penalty_max',.07)); bull=_clip(lo+(hi-lo)*confidence-penalty,.10,.30); return bull,base,1.-base-bull
+    """V2.3: confidence/dispersion control concentration around Base; stress is not probabilized."""
+    p=policy.get('probabilities',{}) or {}
+    d0=float(p.get('dispersion_penalty_start',.50)); dspan=max(float(p.get('dispersion_full_penalty_at',1.25))-d0,1e-9)
+    dpen=_clip((dispersion-d0)/dspan,0.,1.)
+    base_lo=float(p.get('base_min',.45)); base_hi=float(p.get('base_max',.65))
+    base=_clip(base_lo+(base_hi-base_lo)*confidence-dpen*float(p.get('dispersion_base_penalty_max',.10)),base_lo,base_hi)
+    bull_lo=float(p.get('bull_min',.15)); bull_hi=float(p.get('bull_max',.27))
+    bull=_clip(bull_lo+(bull_hi-bull_lo)*confidence-dpen*float(p.get('dispersion_bull_penalty_max',.07)),float(p.get('bull_hard_min',.10)),float(p.get('bull_hard_max',.30)))
+    bear=1.-base-bull; bear_min=float(p.get('bear_min',.15))
+    if bear<bear_min:
+        base=max(base_lo,base-(bear_min-bear)); bear=1.-base-bull
+    return bull,base,bear
+
+
+def _probabilistic_bear(stress:float,base:float,consensus_low:float,confidence:float,dispersion:float,policy:dict)->tuple[float,list[str]]:
+    """Build an ordinary 12m downside case between Base and explicit stress.
+
+    The severe sector stress remains observable as stress_target_price and receives no
+    scenario probability. Analyst low is corroborating evidence only.
+    """
+    if not (stress>0 and stress<base): raise ValueError('STRESS_BASE_ORDER_INVALID')
+    p=policy.get('probabilistic_bear',{}) or {}; flags=['STRESS_SEPARATED_FROM_PROBABILISTIC_BEAR']
+    d0=float(p.get('dispersion_penalty_start',.50)); dspan=max(float(p.get('dispersion_full_penalty_at',1.25))-d0,1e-9); dpen=_clip((dispersion-d0)/dspan,0.,1.)
+    sw=float(p.get('stress_weight_base',.35))+(1.-confidence)*float(p.get('low_confidence_stress_weight_max',.20))+dpen*float(p.get('dispersion_stress_weight_max',.10))
+    sw=_clip(sw,float(p.get('stress_weight_min',.25)),float(p.get('stress_weight_max',.60)))
+    fundamental=base-sw*(base-stress)
+    eps=max(abs(base)*float(p.get('ordering_epsilon_pct',.001)),1e-8)
+    low=_clip(consensus_low,stress+eps,base-eps)
+    if low!=consensus_low: flags.append('CONSENSUS_LOW_CLIPPED_TO_PROBABILISTIC_RANGE')
+    cw=_clip(float(p.get('consensus_low_blend',.25)),0.,.50)
+    bear=(1.-cw)*fundamental+cw*low
+    bear=_clip(bear,stress+eps,base-eps)
+    return bear,flags
+
 
 def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper(); overrides=policy.get('sector_overrides',{}) or {}
@@ -28,9 +62,10 @@ def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     official=str(row.get('industry_sector_official') or '').upper(); provider=str(row.get('fundamental_sector') or row.get('sector') or row.get('finnhub_sector') or row.get('fundamental_industry') or row.get('industry') or '').upper(); text=f'{official} {provider}'.strip()
     if any(k in text for k in ('BANK','FINANC','INSURANCE','CAPITAL MARKET','ASSET MANAGEMENT')):return 'FINANCIALS','COMAFI_OR_PROVIDER_METADATA'
     if any(k in text for k in ('ENERGY','OIL','GAS','PETROLE','PETRÓLE','PETROLEUM')):return 'ENERGY','COMAFI_OR_PROVIDER_METADATA'
-    corporate_keywords=tuple(str(x).upper() for x in (policy.get('sector_classification',{}) or {}).get('corporate_keywords',('TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE')))
-    if any(k in text for k in corporate_keywords):return 'CORPORATE','COMAFI_OR_PROVIDER_METADATA'
+    keys=tuple(str(x).upper() for x in (policy.get('sector_classification',{}) or {}).get('corporate_keywords',()))
+    if any(k in text for k in keys):return 'CORPORATE','COMAFI_OR_PROVIDER_METADATA'
     return None,'UNVERIFIED'
+
 
 def _security_keys(row:pd.Series)->list[str]:
     keys=[]
@@ -39,54 +74,52 @@ def _security_keys(row:pd.Series)->list[str]:
         if key and key not in keys:keys.append(key)
     return keys
 
+
 def _verified_security_mapping(row:pd.Series,policy:dict)->tuple[float,bool,str|None,str|None]:
     direct=_num(row.get('adr_shares_per_depositary_receipt'))
     if direct is not None and direct>0 and bool(row.get('economic_unit_normalization_verified',False)):
         return direct,True,str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA'),str(row.get('foreign_security_type') or 'UPSTREAM_VERIFIED_SECURITY')
     cfg=policy.get('identity',{}) or {}; adrs=cfg.get('verified_adr_ratios',{}) or {}; listings=cfg.get('verified_direct_foreign_listings',{}) or {}
     for key in _security_keys(row):
-        entry=adrs.get(key)
-        if isinstance(entry,dict):
-            ratio=_num(entry.get('ordinary_shares_per_ads'))
-            if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source']),'ADS_ADR'
+        e=adrs.get(key)
+        if isinstance(e,dict):
+            ratio=_num(e.get('ordinary_shares_per_ads'))
+            if ratio is not None and ratio>0 and e.get('source'):return ratio,True,str(e['source']),'ADS_ADR'
     for key in _security_keys(row):
-        entry=listings.get(key)
-        if isinstance(entry,dict):
-            ratio=_num(entry.get('ordinary_shares_per_us_traded_share'))
-            if ratio is not None and ratio>0 and entry.get('source') and entry.get('security_type'):return ratio,True,str(entry['source']),str(entry['security_type'])
-    return 1.0,False,None,None
+        e=listings.get(key)
+        if isinstance(e,dict):
+            ratio=_num(e.get('ordinary_shares_per_us_traded_share'))
+            if ratio is not None and ratio>0 and e.get('source') and e.get('security_type'):return ratio,True,str(e['source']),str(e['security_type'])
+    return 1.,False,None,None
+
 
 def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,Any]]:
     blockers=[]; flags=[]; cfg=policy.get('identity',{}) or {}; current=_num(row.get('current_price')); eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized'))
-    adr,adr_verified,adr_source,security_type=_verified_security_mapping(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
-    implied_eps=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; ratio_eps=implied_eps/current if implied_eps is not None and current and current>0 else None
-    bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); implied_pb=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None; ratio_pb=implied_pb/current if implied_pb is not None and current and current>0 else None
-    lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80)); identity_method='EPS_PE' if ratio_eps is not None else ('PB' if ratio_pb is not None else 'UNVERIFIABLE'); ratio=ratio_eps if ratio_eps is not None else ratio_pb; implied=implied_eps if ratio_eps is not None else implied_pb
+    adr,av,src,stype=_verified_security_mapping(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1. if fx is None else fx
+    ie=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; re=ie/current if ie is not None and current and current>0 else None
+    bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); ip=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None; rp=ip/current if ip is not None and current and current>0 else None
+    lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.8)); method='EPS_PE' if re is not None else ('PB' if rp is not None else 'UNVERIFIABLE'); ratio=re if re is not None else rp; implied=ie if re is not None else ip
     if ratio is None:blockers.append('ECONOMIC_IDENTITY_UNVERIFIABLE')
-    elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{identity_method}_UNIT_MISMATCH')
+    elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{method}_UNIT_MISMATCH')
     if not str(row.get('underlying_ticker') or '').strip():blockers.append('ECONOMIC_IDENTITY_UNDERLYING_MISSING')
-    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); normalization_verified=bool(row.get('economic_unit_normalization_verified',False)) or adr_verified
-    if target!=eps_unit and not normalization_verified:blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
-    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
-    us_traded=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
-    if non_us and us_traded and not normalization_verified:
-        blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED'); flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
-    if adr_verified and security_type=='ADS_ADR' and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
-    if adr_verified and security_type=='ADS_ADR' and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
-    if adr_verified and security_type not in (None,'ADS_ADR'):
-        flags.append('VERIFIED_DIRECT_FOREIGN_LISTING_MAPPING_APPLIED')
-        if adr==1.0:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
-    if identity_method=='PB':flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')
-    status='VERIFIED_NORMALIZED' if not blockers else 'BLOCKED'; return not blockers,blockers,{'economic_identity_status':status,'economic_identity_method':identity_method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':adr_verified,'identity_adr_ratio_source':adr_source,'identity_security_type':security_type,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':eps_unit}
+    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); epsunit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); verified=bool(row.get('economic_unit_normalization_verified',False)) or av
+    if target!=epsunit and not verified:blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
+    country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); nonus=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS'); ustraded=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
+    if nonus and ustraded and not verified:blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED'); flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    if av and stype=='ADS_ADR' and adr!=1.:flags.append('VERIFIED_ADR_RATIO_APPLIED')
+    if av and stype=='ADS_ADR' and adr==1. and nonus:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
+    if av and stype not in (None,'ADS_ADR'):flags.append('VERIFIED_DIRECT_FOREIGN_LISTING_MAPPING_APPLIED'); flags.extend(['VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED'] if adr==1. else [])
+    if method=='PB':flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')
+    return not blockers,blockers,{'economic_identity_status':'VERIFIED_NORMALIZED' if not blockers else 'BLOCKED','economic_identity_method':method,'identity_implied_price':implied,'identity_implied_to_market_ratio':ratio,'identity_adr_ratio_applied':adr,'identity_adr_ratio_verified':av,'identity_adr_ratio_source':src,'identity_security_type':stype,'identity_fx_applied':fx,'identity_flags':flags,'identity_target_unit':target,'identity_eps_unit':epsunit}
+
 
 def _scenario_unit_row(row:pd.Series,meta:dict)->pd.Series:
-    r=row.copy(); adr=_num(meta.get('identity_adr_ratio_applied')) or 1.0; fx=_num(meta.get('identity_fx_applied')) or 1.0; factor=adr*fx
+    r=row.copy(); factor=(_num(meta.get('identity_adr_ratio_applied')) or 1.)*(_num(meta.get('identity_fx_applied')) or 1.)
     if factor<=0:raise ValueError('SCENARIO_ECONOMIC_UNIT_NORMALIZATION_INVALID')
     for c in ('fundamental_eps_normalized','fundamental_book_value_per_share','book_value_per_share'):
-        v=_num(r.get(c))
-        if v is not None:r[c]=v*factor
-    r['scenario_economic_unit_factor']=factor
-    return r
+        v=_num(r.get(c)); r[c]=v*factor if v is not None else r.get(c)
+    r['scenario_economic_unit_factor']=factor; return r
+
 
 def _consensus(row,current,policy):
     high=_first_num(row,'consensus_target_high','bull_target_price'); med=_first_num(row,'consensus_target_median','base_target_price'); low=_first_num(row,'consensus_target_low','bear_target_price'); flags=[]
@@ -97,67 +130,72 @@ def _consensus(row,current,policy):
     if high>cap:flags.append('CONSENSUS_HIGH_WINSORIZED_FOR_PLAUSIBILITY')
     return high,med,low,dispersion,flags,min(wh,cap)
 
+
 def _corporate_targets(row,current,median,bull_cap,policy):
-    c=policy.get('corporate',policy.get('equity',{})) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y'))
+    c=policy.get('corporate',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y'))
     if eps is None or eps<=0 or pe is None or pe<=0 or growth is None:raise ValueError('CORPORATE_FUNDAMENTALS_INCOMPLETE')
-    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20))); pem=_clip(pe,float(c.get('base_pe_floor',6)),float(c.get('base_pe_cap',25))); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
-    de=_num(row.get('fundamental_debt_to_equity')); extra=0 if de is None else _clip(max(de-float(c.get('debt_equity_stress_start',.75)),0)*float(c.get('debt_equity_stress_slope',.08)),0,float(c.get('max_leverage_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.18))+extra,float(c.get('bear_eps_compression',.18)),float(c.get('bear_eps_compression_cap',.35))); bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',5)),pem*float(c.get('bear_multiple_factor',.78))); bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30))); bull=min(eps*(1+bg)*min(float(c.get('bull_pe_cap',30)),pem*float(c.get('bull_multiple_factor',1.12))),bull_cap); return bear,base,bull,[]
+    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20))); pem=_clip(pe,float(c.get('base_pe_floor',6)),float(c.get('base_pe_cap',25))); bf=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*bf+blend*median
+    de=_num(row.get('fundamental_debt_to_equity')); extra=0 if de is None else _clip(max(de-float(c.get('debt_equity_stress_start',.75)),0)*float(c.get('debt_equity_stress_slope',.08)),0,float(c.get('max_leverage_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.18))+extra,float(c.get('bear_eps_compression',.18)),float(c.get('bear_eps_compression_cap',.35))); stress=eps*(1-comp)*max(float(c.get('bear_pe_floor',5)),pem*float(c.get('bear_multiple_factor',.78)))
+    bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30))); bull=min(eps*(1+bg)*min(float(c.get('bull_pe_cap',30)),pem*float(c.get('bull_multiple_factor',1.12))),bull_cap); return stress,base,bull,['CORPORATE_SEVERE_DOWNSIDE_RETAINED_AS_STRESS']
+
 
 def _financial_targets(row,current,median,bull_cap,policy):
     c=policy.get('financials',{}) or {}; bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); roe=_rate(_first_num(row,'fundamental_roe','roe')); flags=['DEBT_EQUITY_NOT_USED_FOR_FINANCIALS']
     if bv is None or bv<=0 or roe is None:raise ValueError('FINANCIAL_FUNDAMENTALS_INCOMPLETE')
-    observed_pb=current/bv; r=_clip(roe,float(c.get('roe_floor',.04)),float(c.get('roe_cap',.22))); fair_pb=_clip(float(c.get('base_pb_anchor',1))+float(c.get('roe_pb_sensitivity',3))*(r-float(c.get('cost_of_equity_anchor',.10))),float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.0)))
+    opb=current/bv; r=_clip(roe,float(c.get('roe_floor',.04)),float(c.get('roe_cap',.22))); fpb=_clip(float(c.get('base_pb_anchor',1))+float(c.get('roe_pb_sensitivity',3))*(r-float(c.get('cost_of_equity_anchor',.10))),float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.)))
     ow=float(c.get('observed_pb_weight',.65)); fw=float(c.get('fair_pb_weight',1-ow)); denom=ow+fw
     if denom<=0:raise ValueError('FINANCIAL_PB_WEIGHTS_INVALID')
-    basepb=_clip((ow*observed_pb+fw*fair_pb)/denom,float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.0))); flags.append('FINANCIAL_OBSERVED_PB_ANCHORED')
-    fundamental_base=bv*basepb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*fundamental_base+blend*median; bear=bv*max(float(c.get('bear_pb_floor',.35)),basepb*float(c.get('bear_pb_factor',.72))); raw_bull=bv*min(float(c.get('bull_pb_cap',5.0)),basepb*float(c.get('bull_pb_factor',1.2))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap)
-    if bull>raw_bull:flags.append('FINANCIAL_BULL_ORDERING_FLOOR_APPLIED')
-    return bear,base,bull,flags
+    bpb=_clip((ow*opb+fw*fpb)/denom,float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.))); flags.append('FINANCIAL_OBSERVED_PB_ANCHORED'); fbase=bv*bpb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*fbase+blend*median
+    stress=bv*max(float(c.get('bear_pb_floor',.35)),bpb*float(c.get('bear_pb_factor',.72))); raw=bv*min(float(c.get('bull_pb_cap',5.)),bpb*float(c.get('bull_pb_factor',1.2))); bull=min(max(raw,base*(1+float(c.get('minimum_bull_premium_to_base',.10)))),bull_cap)
+    if bull>raw:flags.append('FINANCIAL_BULL_ORDERING_FLOOR_APPLIED')
+    flags.append('FINANCIAL_SEVERE_DOWNSIDE_RETAINED_AS_STRESS'); return stress,base,bull,flags
+
 
 def _energy_targets(row,current,median,bull_cap,policy):
     c=policy.get('energy',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); fcf=_rate(_first_num(row,'fundamental_fcf_yield','fcf_yield')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
     if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('ENERGY_FUNDAMENTALS_INCOMPLETE')
-    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median; bear=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); bull=min(bf*float(c.get('bull_cycle_factor',1.28))+current*div,bull_cap); return bear,base,bull,['ENERGY_CYCLE_NORMALIZATION_APPLIED']
+    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median; stress=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); bull=min(bf*float(c.get('bull_cycle_factor',1.28))+current*div,bull_cap); return stress,base,bull,['ENERGY_CYCLE_NORMALIZATION_APPLIED','ENERGY_SEVERE_DOWNSIDE_RETAINED_AS_STRESS']
+
 
 def _equity_review(row,policy):
     out=row.to_dict(); blockers=[]; flags=[]; current=_num(row.get('current_price')); confidence=_num(row.get('valuation_confidence'))
     if current is None or current<=0:blockers.append('SCENARIO_CURRENT_PRICE_MISSING')
     if confidence is None or not 0<=confidence<=1:blockers.append('SCENARIO_CONFIDENCE_MISSING')
-    if blockers:out.update(scenario_validated=False,scenario_review_status='SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags,scenario_method='SECTOR_AWARE_FUNDAMENTAL_SCENARIO_ENGINE_V2_2'); return out
+    method='SECTOR_AWARE_PROBABILISTIC_SCENARIO_ENGINE_V2_3'
+    if blockers:out.update(scenario_validated=False,scenario_review_status='SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags,scenario_method=method); return out
     _,ib,meta=_identity_check(row,policy); blockers.extend(ib); high,median,low,disp,cf,bcap=_consensus(row,current,policy); flags.extend(cf)
     if any(x is None or x<=0 for x in (high,median,low)) or bcap is None:blockers.append('CONSENSUS_DISTRIBUTION_MISSING')
-    sector,sector_source=_classify_sector(row,policy)
+    sector,source=_classify_sector(row,policy)
     if sector is None:blockers.append('SECTOR_CLASSIFICATION_UNVERIFIED')
-    if blockers:out.update(**meta,scenario_sector_model=sector,scenario_sector_source=sector_source,scenario_validated=False,scenario_review_status='SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags+meta.get('identity_flags',[]),scenario_method='SECTOR_AWARE_FUNDAMENTAL_SCENARIO_ENGINE_V2_2'); return out
-    try:
-        scenario_row=_scenario_unit_row(row,meta); factor=_num(scenario_row.get('scenario_economic_unit_factor')) or 1.0
-        if factor!=1.0:flags.append('SCENARIO_FUNDAMENTALS_NORMALIZED_TO_TRADED_SECURITY')
-        if sector=='FINANCIALS':bear,base,bull,mf=_financial_targets(scenario_row,current,median,bcap,policy)
-        elif sector=='ENERGY':bear,base,bull,mf=_energy_targets(scenario_row,current,median,bcap,policy)
-        else:bear,base,bull,mf=_corporate_targets(scenario_row,current,median,bcap,policy)
-        flags.extend(mf)
-    except ValueError as exc:blockers.append(str(exc)); bear=base=bull=None
-    if bear is not None and base is not None and bull is not None and not (bear>0 and bear<base<bull):blockers.append('FUNDAMENTAL_SCENARIO_ORDER_INVALID')
-    bp,bap,brp=_dynamic_probabilities(confidence,disp,policy); out.update(**meta,pre_review_bull_target_price=_num(row.get('bull_target_price')),pre_review_base_target_price=_num(row.get('base_target_price')),pre_review_bear_target_price=_num(row.get('bear_target_price')),bull_target_price=bull,base_target_price=base,bear_target_price=bear,bull_probability=bp,base_probability=bap,bear_probability=brp,scenario_sector_model=sector,scenario_sector_source=sector_source,scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags+meta.get('identity_flags',[]),scenario_method='SECTOR_AWARE_FUNDAMENTAL_SCENARIO_ENGINE_V2_2'); return out
+    stress=base=bull=bear=None
+    if not blockers:
+        try:
+            sr=_scenario_unit_row(row,meta); factor=_num(sr.get('scenario_economic_unit_factor')) or 1.
+            if factor!=1.:flags.append('SCENARIO_FUNDAMENTALS_NORMALIZED_TO_TRADED_SECURITY')
+            if sector=='FINANCIALS':stress,base,bull,mf=_financial_targets(sr,current,median,bcap,policy)
+            elif sector=='ENERGY':stress,base,bull,mf=_energy_targets(sr,current,median,bcap,policy)
+            else:stress,base,bull,mf=_corporate_targets(sr,current,median,bcap,policy)
+            flags.extend(mf); bear,bf=_probabilistic_bear(stress,base,low,confidence,disp,policy); flags.extend(bf)
+        except ValueError as exc:blockers.append(str(exc))
+    if all(x is not None for x in (stress,bear,base,bull)) and not (stress>0 and stress<bear<base<bull):blockers.append('V2_3_SCENARIO_ORDER_INVALID')
+    bp,bap,brp=_dynamic_probabilities(confidence,disp,policy)
+    out.update(**meta,pre_review_bull_target_price=_num(row.get('bull_target_price')),pre_review_base_target_price=_num(row.get('base_target_price')),pre_review_bear_target_price=_num(row.get('bear_target_price')),stress_target_price=stress,bull_target_price=bull,base_target_price=base,bear_target_price=bear,bull_probability=bp,base_probability=bap,bear_probability=brp,stress_probability=0.0,scenario_sector_model=sector,scenario_sector_source=source,scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags+meta.get('identity_flags',[]),scenario_method=method); return out
+
 
 def _non_equity_review(row:pd.Series)->dict[str,Any]:
-    out=row.to_dict(); blockers=[]; flags=['NON_EQUITY_TRACKER_REVIEWED_FAIL_CLOSED']; status=str(row.get('valuation_status') or '').upper()
+    out=row.to_dict(); blockers=[]; flags=['NON_EQUITY_TRACKER_REVIEWED_FAIL_CLOSED','NON_EQUITY_STRESS_PROXY_EQUALS_UPSTREAM_BEAR']; status=str(row.get('valuation_status') or '').upper()
     if status!='VALUATION_READY':blockers.append('UPSTREAM_VALUATION_NOT_READY')
     bull=_num(row.get('bull_target_price')); base=_num(row.get('base_target_price')); bear=_num(row.get('bear_target_price'))
     if any(x is None or x<=0 for x in (bull,base,bear)) or not (bear<base<bull):blockers.append('NON_EQUITY_SCENARIO_TARGETS_MISSING_OR_INVALID')
     probs=[_num(row.get(c)) for c in ('bull_probability','base_probability','bear_probability')]
-    if any(x is None or x<0 or x>1 for x in probs) or (all(x is not None for x in probs) and abs(sum(probs)-1.0)>1e-6):blockers.append('NON_EQUITY_SCENARIO_PROBABILITIES_INVALID')
-    out.update(scenario_sector_model=None,scenario_sector_source='N/A',economic_identity_status='N/A',economic_identity_method='N/A',identity_adr_ratio_applied=1.0,identity_adr_ratio_verified=False,identity_adr_ratio_source=None,identity_security_type='NON_EQUITY',identity_fx_applied=1.0,identity_implied_price=None,identity_implied_to_market_ratio=None,identity_target_unit='N/A',identity_eps_unit='N/A',identity_flags=[],scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags,scenario_method='NON_EQUITY_TRACKER_FAIL_CLOSED_V2_2'); return out
+    if any(x is None or x<0 or x>1 for x in probs) or (all(x is not None for x in probs) and abs(sum(probs)-1.)>1e-6):blockers.append('NON_EQUITY_SCENARIO_PROBABILITIES_INVALID')
+    out.update(stress_target_price=bear,stress_probability=0.0,scenario_sector_model=None,scenario_sector_source='N/A',economic_identity_status='N/A',economic_identity_method='N/A',identity_adr_ratio_applied=1.,identity_adr_ratio_verified=False,identity_adr_ratio_source=None,identity_security_type='NON_EQUITY',identity_fx_applied=1.,identity_implied_price=None,identity_implied_to_market_ratio=None,identity_target_unit='N/A',identity_eps_unit='N/A',identity_flags=[],scenario_validated=not blockers,scenario_review_status='SCENARIO_VALIDATED' if not blockers else 'SCENARIO_NOT_VALIDATED',scenario_review_blockers=blockers,scenario_review_flags=flags,scenario_method='NON_EQUITY_TRACKER_FAIL_CLOSED_V2_3'); return out
+
 
 def review_scenarios(df:pd.DataFrame,policy:dict)->pd.DataFrame:
-    rows=[]
-    for _,row in df.iterrows():
-        engine=str(row.get('valuation_engine_type') or '').upper()
-        rows.append(_equity_review(row,policy) if engine=='EQUITY' else _non_equity_review(row))
-    return pd.DataFrame(rows)
+    return pd.DataFrame([_equity_review(r,policy) if str(r.get('valuation_engine_type') or '').upper()=='EQUITY' else _non_equity_review(r) for _,r in df.iterrows()])
 
 
 def validate_scenarios(df:pd.DataFrame,policy:dict)->tuple[pd.DataFrame,dict[str,Any]]:
-    reviewed=review_scenarios(df,policy); validated=int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()) if 'scenario_validated' in reviewed.columns else 0; total=int(len(reviewed))
-    manifest={'methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),'scenario_methodology_version':str(policy.get('methodology_version') or 'SCENARIO-2.2'),'scenario_review_count':total,'scenario_validated_count':validated,'scenario_blocked_count':total-validated}
-    return reviewed,manifest
+    reviewed=review_scenarios(df,policy); validated=int(reviewed['scenario_validated'].fillna(False).astype(bool).sum()) if 'scenario_validated' in reviewed.columns else 0; total=len(reviewed); version=str(policy.get('methodology_version') or 'SCENARIO-2.3')
+    return reviewed,{'methodology_version':version,'scenario_methodology_version':version,'scenario_review_count':total,'scenario_validated_count':validated,'scenario_blocked_count':total-validated,'stress_separated_from_probabilistic_distribution':True}
