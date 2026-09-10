@@ -28,9 +28,10 @@ jobs:
       - name: Download exact dispatched valuation artifact
         run: |
           VAL_RUN_ID="${{ inputs.valuation_run_id }}"
-          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId)
+          META=$(gh run view "$VAL_RUN_ID" --json workflowName,conclusion,databaseId,headBranch)
           test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["workflowName"])')" = "Build Canonical Valuation Scenarios"
           test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["conclusion"])')" = "success"
+          test "$(echo "$META"|python -c 'import json,sys;print(json.load(sys.stdin)["headBranch"])')" = "${GITHUB_REF_NAME}"
           echo "VAL_RUN_ID=$VAL_RUN_ID" >> "$GITHUB_ENV"
           mkdir -p data/upstream_valuation
           gh run download "$VAL_RUN_ID" --name canonical-valuation-scenarios --dir data/upstream_valuation
@@ -81,5 +82,5 @@ jobs:
           name: valuation-g4-cash-hurdle
           path: data/canonical/g4/
           if-no-files-found: error
-      - name: Dispatch decisional Risk with exact G4 run
-        run: gh workflow run decisional_risk.yml -f g4_run_id=${{ github.run_id }}
+      - name: Dispatch decisional Risk with exact G4 run on same ref
+        run: gh workflow run decisional_risk.yml --ref "${GITHUB_REF_NAME}" -f g4_run_id=${{ github.run_id }}
