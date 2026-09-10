@@ -71,17 +71,27 @@ jobs:
           wait_child decisional_risk.yml "$GA" risk_run_id.txt
           D=$(cat risk_run_id.txt); DA=$(gh run view "$D" --json createdAt --jq .createdAt)
           wait_child investment_committee.yml "$DA" committee_run_id.txt
+      - name: Certify every workflow executed on the V2 ref
+        run: |
+          set -euo pipefail
+          for F in universe_run_id.txt price_run_id.txt history_run_id.txt market_features_run_id.txt correlation_risk_run_id.txt portfolio_run_id.txt local_market_run_id.txt research_run_id.txt valuation_run_id.txt g4_run_id.txt risk_run_id.txt committee_run_id.txt; do
+            ID=$(cat "$F")
+            BRANCH=$(gh run view "$ID" --json headBranch --jq .headBranch)
+            test "$BRANCH" = "$E2E_REF" || { echo "REF_MISMATCH $F run=$ID branch=$BRANCH expected=$E2E_REF"; exit 1; }
+          done
+          echo "SAME_REF_CHAIN=PASS ref=$E2E_REF"
       - name: Download final Committee artifact and certify full lineage
         run: |
           U=$(cat universe_run_id.txt); R=$(cat research_run_id.txt); V=$(cat valuation_run_id.txt); G=$(cat g4_run_id.txt); D=$(cat risk_run_id.txt); C=$(cat committee_run_id.txt)
           mkdir -p final
           gh run download "$C" --name investment-committee-decision --dir final
-          python - "$U" "$R" "$V" "$G" "$D" "$C" <<'PY'
+          python - "$U" "$R" "$V" "$G" "$D" "$C" "$E2E_REF" <<'PY'
           import json,sys
-          u,r,v,g,d,c=map(int,sys.argv[1:]); l=json.load(open('final/e2e_lineage.json')); dec=json.load(open('final/committee_decision.json')); shadow=json.load(open('final/shadow_book.json'))
+          u,r,v,g,d,c=map(int,sys.argv[1:7]); ref=sys.argv[7]; l=json.load(open('final/e2e_lineage.json')); dec=json.load(open('final/committee_decision.json')); shadow=json.load(open('final/shadow_book.json'))
           assert l['universe_run_id']==u,(l,u); assert l['research_run_id']==r,(l,r); assert l['valuation_run_id']==v,(l,v); assert l['g4_run_id']==g,(l,g); assert l['decisional_risk_run_id']==d,(l,d); assert l['committee_run_id']==c,(l,c)
+          assert l.get('e2e_ref')==ref,(l,ref)
           assert l['canonical_eligible_universe_count']==304,l; assert l['decisional_risk_status']=='PASS',l; assert l['decision_persisted'] is True,l; assert dec['fabricated_trade_count']==0,dec; assert shadow['status'] in ('NO_ACTION_PERSISTED','ACTION_PERSISTED'),shadow
-          print(json.dumps({'AUTONOMOUS_E2E':'PASS','lineage':l,'decision':dec['decision']},indent=2))
+          print(json.dumps({'AUTONOMOUS_E2E_V2':'PASS','same_ref':ref,'lineage':l,'decision':dec['decision']},indent=2))
           PY
       - name: Persist autonomous certification evidence
         uses: actions/upload-artifact@v4
