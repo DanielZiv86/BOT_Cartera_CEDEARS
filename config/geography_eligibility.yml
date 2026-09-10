@@ -1,0 +1,54 @@
+policy_version: GEOGRAPHY-2.1
+
+# Investment mandate: the underlying security must trade in the United States and
+# the issuer must be domiciled in the United States or Europe.
+# Exchange location and issuer domicile are separate hard gates.
+allowed_us_exchanges:
+  - NYSE
+  - NASDAQ
+  - AMEX
+  - NYSE ARCA
+  - NYSEAMERICAN
+  - BATS
+  - CBOE
+
+allowed_issuer_countries:
+  US: UNITED_STATES
+  GB: EUROPE
+  UK: EUROPE
+  IE: EUROPE
+  DE: EUROPE
+  FR: EUROPE
+  ES: EUROPE
+  IT: EUROPE
+  NL: EUROPE
+  BE: EUROPE
+  LU: EUROPE
+  CH: EUROPE
+  AT: EUROPE
+  DK: EUROPE
+  SE: EUROPE
+  NO: EUROPE
+  FI: EUROPE
+  PT: EUROPE
+  GR: EUROPE
+  PL: EUROPE
+  CZ: EUROPE
+  RO: EUROPE
+  HU: EUROPE
+  IS: EUROPE
+
+# Explicit project mandate exception. It remains auditable and does not broaden
+# the rule for any other instrument.
+mandate_exceptions:
+  - IWDA
+
+fail_closed_on_unknown_country: true
+fail_closed_on_non_us_exchange: true
+
+reason_codes:
+  eligible: ISSUER_US_OR_EUROPE_AND_US_TRADED
+  country_unknown: ISSUER_COUNTRY_UNVERIFIED
+  country_outside_mandate: ISSUER_OUTSIDE_US_EUROPE
+  exchange_outside_mandate: UNDERLYING_NOT_US_TRADED
+  mandate_exception: EXPLICIT_USER_MANDATE_EXCEPTION
