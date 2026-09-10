@@ -4,7 +4,7 @@ from src.valuation.deep_scenario_engine import validate_scenarios
 POLICY={
  'methodology_version':'SCENARIO-2.1','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE'},
- 'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','HEALTH','CONSUMER','INDUSTRIAL','TRANSPORT','TELECOM']},
+ 'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'base_pe_cap':25,'bull_multiple_factor':1.12,'bull_pe_cap':30,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
  'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5},
@@ -43,7 +43,7 @@ def test_verified_adr_ratio_normalization_can_reconcile_identity_and_financial_s
 
 def test_txr_ten_for_one_ads_reconciles_identity_and_scenario_order():
  out,_=validate_scenarios(pd.DataFrame([_row('TXR',58.11,81.9,57.63,40.4,.2166,26.82,-.3781,.65,.4,sector='Basic Materials',issuer_country_normalized='LU',underlying_market_official='New York')]),POLICY); r=out.iloc[0]
- assert r['economic_identity_status']=='VERIFIED_NORMALIZED'; assert r['identity_adr_ratio_applied']==10; assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']; assert r['base_target_price']>40
+ assert r['scenario_sector_model']=='CORPORATE'; assert r['economic_identity_status']=='VERIFIED_NORMALIZED'; assert r['identity_adr_ratio_applied']==10; assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']; assert r['base_target_price']>40
 
 def test_vod_negative_eps_uses_pb_identity_fallback():
  out,_=validate_scenarios(pd.DataFrame([_row('VOD',17.13,21.34,15.89,11.63,-.1,10,.08,.65,.4,sector='Telecom',issuer_country_normalized='GB',underlying_market_official='NASDAQ GS',fundamental_book_value_per_share=2.1931,fundamental_price_to_book=.6013)]),POLICY); r=out.iloc[0]
