@@ -83,3 +83,14 @@ def test_blocked_etf_cannot_resurrect_as_g4_eligible():
 def test_ready_etf_requires_complete_ordered_scenarios_and_probabilities():
  row={'cedear_ticker':'XLF','valuation_engine_type':'ETF','valuation_status':'VALUATION_READY','bull_target_price':120,'base_target_price':105,'bear_target_price':85,'bull_probability':.25,'base_probability':.5,'bear_probability':.25}
  out,m=validate_scenarios(pd.DataFrame([row]),POLICY); assert out.iloc[0]['scenario_validated']; assert m['scenario_validated_count']==1
+
+def test_richly_valued_growth_corporate_gets_bull_ordering_floor_like_financials():
+ # Real NVDA-shaped inputs: P/E (43.8) is clipped down to base_pe_cap (25) for
+ # both the Base and Bull fundamental legs, but only Base is pulled up toward
+ # the (much higher) consensus median. Without a floor, the purely mechanical
+ # Bull ends up below that consensus-pulled Base.
+ row=_row('NVDA',223.67,540.75,306.0,181.8,4.8979,43.8295,204.08,.7,.0538,sector='Technology')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'CORPORATE_BULL_ORDERING_FLOOR_APPLIED' in r['scenario_review_flags']
+ assert abs(r['bull_target_price']-r['base_target_price']*1.10)<1e-6
