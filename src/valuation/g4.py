@@ -23,6 +23,8 @@ class G4Policy:
     local_warning_penalty: float = 0.02
     correlation_penalty_max: float = 0.03
     concentration_penalty_max: float = 0.03
+    fx_regulatory_stress_ccl_haircut: float = 0.25
+    max_fx_regulatory_stress_downside: float = -0.20
 
     @property
     def cash_hurdle(self) -> float:
@@ -80,6 +82,18 @@ def calculate_g4_cash_hurdle(
     Returns are measured economically in USD: the local CEDEAR entry cost is
     translated through the robust market CCL while future local value is derived
     from the underlying target price and the validated Comafi ratio.
+
+    A separate, zero-probability FX/regulatory Stress scenario is evaluated for
+    every candidate alongside the fundamental Bull/Base/Bear/Stress fan: the Base
+    target realized through a degraded CCL (policy.fx_regulatory_stress_ccl_haircut
+    below today's market CCL), representing capital-control tightening or forced
+    settlement through a worse conversion channel at exit. This is a market-wide
+    risk factor, not an idiosyncratic one, so the same haircut applies uniformly
+    to every candidate. It is never blended into expected return -- like the
+    fundamental Stress scenario, it is a hard downside veto only, kept auditably
+    separate from the fundamental downside veto (G4_FAIL_FX_REGULATORY_STRESS vs
+    G4_FAIL_DOWNSIDE) so a failure's cause is never ambiguous between "the company
+    is risky" and "the currency channel is risky".
     """
     policy = policy or G4Policy()
     local = local_market.copy()
@@ -174,6 +188,8 @@ def calculate_g4_cash_hurdle(
             "cash_hurdle": policy.cash_hurdle,
             "minimum_margin_over_hurdle": policy.minimum_margin_over_hurdle,
             "max_bear_downside_allowed": policy.max_bear_downside,
+            "fx_regulatory_stress_ccl_haircut": policy.fx_regulatory_stress_ccl_haircut,
+            "max_fx_regulatory_stress_downside_allowed": policy.max_fx_regulatory_stress_downside,
             "blockers": blockers.copy(),
         }
 
@@ -182,6 +198,8 @@ def calculate_g4_cash_hurdle(
                 "bull_return_net": None,
                 "base_return_net": None,
                 "bear_return_net": None,
+                "fx_stress_market_ccl": None,
+                "fx_stress_return_net": None,
                 "expected_return_net": None,
                 "uncertainty_penalty": None,
                 "correlation_penalty": None,
@@ -203,6 +221,9 @@ def calculate_g4_cash_hurdle(
         base_return = _scenario_return(base_target, ratio, market_ccl, analytical_entry_ars, brokerage_rate, exit_spread_assumption)
         bear_return = _scenario_return(bear_target, ratio, market_ccl, analytical_entry_ars, brokerage_rate, exit_spread_assumption)
         expected = bull_p * bull_return + base_p * base_return + bear_p * bear_return
+
+        fx_stress_market_ccl = market_ccl * (1.0 - policy.fx_regulatory_stress_ccl_haircut)
+        fx_stress_return = _scenario_return(base_target, ratio, fx_stress_market_ccl, analytical_entry_ars, brokerage_rate, exit_spread_assumption)
 
         uncertainty_penalty = (1.0 - confidence) * policy.uncertainty_penalty_max
         if local_gate == "PASS_WITH_WARNING":
@@ -227,6 +248,7 @@ def calculate_g4_cash_hurdle(
         risk_adjusted_er = expected - uncertainty_penalty - correlation_penalty - concentration_penalty
         net_benefit = risk_adjusted_er - policy.cash_hurdle
         downside_ok = bear_return >= policy.max_bear_downside
+        fx_stress_downside_ok = fx_stress_return >= policy.max_fx_regulatory_stress_downside
         return_ok = net_benefit >= policy.minimum_margin_over_hurdle
 
         if hard_concentration_fail:
@@ -235,17 +257,22 @@ def calculate_g4_cash_hurdle(
         elif not downside_ok:
             g4_status = "G4_FAIL_DOWNSIDE"
             reason = "BEAR_DOWNSIDE_EXCEEDS_POLICY"
+        elif not fx_stress_downside_ok:
+            g4_status = "G4_FAIL_FX_REGULATORY_STRESS"
+            reason = "FX_REGULATORY_STRESS_DOWNSIDE_EXCEEDS_POLICY"
         elif not return_ok:
             g4_status = "G4_FAIL_RETURN"
             reason = "INSUFFICIENT_RISK_ADJUSTED_MARGIN_VS_CASH"
         else:
             g4_status = "G4_PASS"
-            reason = "POSITIVE_MARGIN_VS_CASH_AND_DOWNSIDE_COMPATIBLE"
+            reason = "POSITIVE_MARGIN_VS_CASH_AND_DOWNSIDE_AND_FX_STRESS_COMPATIBLE"
 
         result.update({
             "bull_return_net": bull_return,
             "base_return_net": base_return,
             "bear_return_net": bear_return,
+            "fx_stress_market_ccl": fx_stress_market_ccl,
+            "fx_stress_return_net": fx_stress_return,
             "expected_return_net": expected,
             "uncertainty_penalty": uncertainty_penalty,
             "correlation_penalty": correlation_penalty,
@@ -278,6 +305,8 @@ def calculate_g4_cash_hurdle(
     else:
         cash_optimality = "CASH_OPTIMAL_BY_MODEL"
 
+    fx_stress_fail_count = int((result_df["g4_status"] == "G4_FAIL_FX_REGULATORY_STRESS").sum()) if total else 0
+
     metrics = {
         "methodology_version": "G4-1.0",
         "ticker_count": total,
@@ -285,11 +314,12 @@ def calculate_g4_cash_hurdle(
         "blocked_count": blocked_count,
         "pass_count": pass_count,
         "fail_count": evaluated_count - pass_count,
+        "fx_regulatory_stress_fail_count": fx_stress_fail_count,
         "cash_hurdle": policy.cash_hurdle,
         "cash_optimality_status": cash_optimality,
         "deployment_decision": "ALLOW_NEW_DEPLOYMENT" if pass_count > 0 else ("RESEARCH_BLOCKED" if blocked_count > 0 else "NO_NEW_DEPLOYMENT"),
         "return_currency": "USD_ECONOMIC_RETURN",
         "execution_separate_from_analytical_g4": True,
-        "note": "G4 PASS requires complete scenario valuation, validated local data, quantitative portfolio fit, sufficient risk-adjusted margin vs cash, and compatible bear downside.",
+        "note": "G4 PASS requires complete scenario valuation, validated local data, quantitative portfolio fit, sufficient risk-adjusted margin vs cash, compatible bear downside, and compatible FX/regulatory stress downside.",
     }
     return result_df, metrics
