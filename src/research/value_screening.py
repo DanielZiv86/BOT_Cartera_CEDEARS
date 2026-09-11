@@ -6,13 +6,19 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_COMPONENTS = {
-    "consensus_upside_to_base": (True, 0.30),
-    "fundamental_pe_normalized": (False, 0.20),
-    "fundamental_eps_growth_3y": (True, 0.20),
+    "consensus_upside_to_base": (True, 0.25),
+    "fundamental_market_cap_usd": (True, 0.15),
+    "sector_tech_affinity": (True, 0.10),
+    "fundamental_pe_normalized": (False, 0.15),
+    "fundamental_eps_growth_3y": (True, 0.15),
     "fundamental_roe": (True, 0.10),
     "fundamental_debt_to_equity": (False, 0.10),
-    "analyst_count": (True, 0.10),
 }
+# Components scored directly as a 0.0-1.0 value rather than percentile-ranked
+# against the rest of the universe -- sector_tech_affinity is already a flag,
+# not a continuous quantity a percentile rank would make sense of.
+CATEGORICAL_COMPONENTS = {"sector_tech_affinity"}
+DEFAULT_TECH_SECTOR_KEYWORDS = ("TECHNOLOGY", "SOFTWARE", "SEMICONDUCTOR", "INTERNET")
 NEUTRAL_SCORE = 0.50
 DEFAULT_MAX_UNCERTAINTY_PENALTY = 20.0
 
@@ -23,6 +29,7 @@ VALUATION_COLUMNS = [
     "current_price",
     "base_target_price",
     "analyst_count",
+    "fundamental_market_cap_usd",
     "fundamental_pe_normalized",
     "fundamental_eps_growth_3y",
     "fundamental_roe",
@@ -86,7 +93,7 @@ def build_value_scores(universe: pd.DataFrame, valuation: pd.DataFrame, policy: 
     keep = [c for c in dict.fromkeys(VALUATION_COLUMNS) if c in val_frame.columns]
     result = canonical.merge(val_frame[keep], on="cedear_ticker", how="left", validate="one_to_one")
 
-    for col in ("current_price", "base_target_price", "analyst_count", "fundamental_pe_normalized", "fundamental_eps_growth_3y", "fundamental_roe", "fundamental_debt_to_equity"):
+    for col in ("current_price", "base_target_price", "analyst_count", "fundamental_market_cap_usd", "fundamental_pe_normalized", "fundamental_eps_growth_3y", "fundamental_roe", "fundamental_debt_to_equity"):
         if col not in result:
             result[col] = np.nan
         result[col] = pd.to_numeric(result[col], errors="coerce")
@@ -100,6 +107,14 @@ def build_value_scores(universe: pd.DataFrame, valuation: pd.DataFrame, policy: 
         np.nan,
     )
 
+    tech_keywords = tuple(str(k).upper() for k in (policy or {}).get("tech_sector_keywords", DEFAULT_TECH_SECTOR_KEYWORDS))
+    sector_text = result.get("industry_sector_official", pd.Series("", index=result.index)).astype(str).str.upper().str.strip()
+    result["sector_tech_affinity"] = np.where(
+        sector_text.eq(""),
+        np.nan,
+        sector_text.apply(lambda t: 1.0 if any(k in t for k in tech_keywords) else 0.0),
+    )
+
     components = _components_from_policy(policy)
     max_uncertainty_penalty = float((policy or {}).get("max_uncertainty_penalty", DEFAULT_MAX_UNCERTAINTY_PENALTY))
 
@@ -108,7 +123,10 @@ def build_value_scores(universe: pd.DataFrame, valuation: pd.DataFrame, policy: 
     missing_components: list[list[str]] = [[] for _ in range(len(result))]
     for component, (higher_is_better, weight) in components.items():
         raw = result[component] if component in result else pd.Series(np.nan, index=result.index)
-        score = _percentile_score(raw, higher_is_better=higher_is_better)
+        if component in CATEGORICAL_COMPONENTS:
+            score = raw if higher_is_better else 1.0 - raw
+        else:
+            score = _percentile_score(raw, higher_is_better=higher_is_better)
         available = raw.notna() & np.isfinite(raw) & equity_mask
         result[f"state_value_{component}"] = np.where(available, "OBSERVED", "UNAVAILABLE")
         result[f"score_value_{component}"] = score.where(available, NEUTRAL_SCORE)

@@ -4,7 +4,11 @@ from src.research.value_screening import build_value_scores
 
 
 def _universe():
-    return pd.DataFrame({"cedear_ticker": ["AAA", "BBB", "CCC", "DDD"], "instrument_type": ["EQUITY", "EQUITY", "ETF", "EQUITY"]})
+    return pd.DataFrame({
+        "cedear_ticker": ["AAA", "BBB", "CCC", "DDD"],
+        "instrument_type": ["EQUITY", "EQUITY", "ETF", "EQUITY"],
+        "industry_sector_official": ["Technology", "Consumer Discretionary", "Multi-Sector", ""],
+    })
 
 
 def _valuation():
@@ -19,6 +23,7 @@ def _valuation():
         "fundamental_eps_growth_3y": [0.15, 0.03, None, None],
         "fundamental_roe": [0.20, 0.08, None, None],
         "fundamental_debt_to_equity": [0.40, 1.10, None, None],
+        "fundamental_market_cap_usd": [2_000_000_000_000.0, 50_000_000_000.0, None, None],
     })
 
 
@@ -61,6 +66,55 @@ def test_component_weights_are_read_from_policy():
     # AAA has 30% upside vs BBB's 5%, and with a single component the percentile
     # ranking directly reflects that ordering.
     assert aaa["value_score"] > bbb["value_score"]
+
+
+def test_megacap_tech_tilt_ranks_larger_tech_name_above_an_otherwise_identical_smaller_non_tech_peer():
+    universe = pd.DataFrame({
+        "cedear_ticker": ["MEGA", "SMALL"],
+        "instrument_type": ["EQUITY", "EQUITY"],
+        "industry_sector_official": ["Technology", "Industrials"],
+    })
+    valuation = pd.DataFrame({
+        "cedear_ticker": ["MEGA", "SMALL"],
+        "valuation_engine_type": ["EQUITY", "EQUITY"],
+        "valuation_status": ["VALUATION_READY", "VALUATION_READY"],
+        "current_price": [100.0, 100.0],
+        "base_target_price": [115.0, 115.0],
+        "fundamental_pe_normalized": [20.0, 20.0],
+        "fundamental_eps_growth_3y": [0.10, 0.10],
+        "fundamental_roe": [0.15, 0.15],
+        "fundamental_debt_to_equity": [0.5, 0.5],
+        "fundamental_market_cap_usd": [1_500_000_000_000.0, 2_000_000_000.0],
+    })
+    screening, _ = build_value_scores(universe, valuation)
+    mega = screening.loc[screening["cedear_ticker"] == "MEGA"].iloc[0]
+    small = screening.loc[screening["cedear_ticker"] == "SMALL"].iloc[0]
+    # Every other fundamental is identical -- only market cap and sector differ.
+    assert mega["value_score"] > small["value_score"]
+    assert mega["state_value_fundamental_market_cap_usd"] == "OBSERVED"
+    assert mega["state_value_sector_tech_affinity"] == "OBSERVED"
+    assert mega["score_value_sector_tech_affinity"] == 1.0
+    assert small["score_value_sector_tech_affinity"] == 0.0
+
+
+def test_missing_sector_classification_gets_neutral_tech_affinity_score():
+    universe = pd.DataFrame({
+        "cedear_ticker": ["UNK"],
+        "instrument_type": ["EQUITY"],
+        "industry_sector_official": [""],
+    })
+    valuation = pd.DataFrame({
+        "cedear_ticker": ["UNK"],
+        "valuation_engine_type": ["EQUITY"],
+        "valuation_status": ["VALUATION_READY"],
+        "current_price": [100.0],
+        "base_target_price": [110.0],
+    })
+    screening, _ = build_value_scores(universe, valuation)
+    row = screening.iloc[0]
+    assert row["state_value_sector_tech_affinity"] == "UNAVAILABLE"
+    assert row["score_value_sector_tech_affinity"] == 0.50
+    assert "sector_tech_affinity" in row["missing_value_components"]
 
 
 def test_duplicate_canonical_ticker_is_rejected():

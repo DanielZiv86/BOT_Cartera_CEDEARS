@@ -41,6 +41,8 @@ def build_equity_scenario(symbol: str, current_price: float | None, connector: F
     except (FinnhubAccessDenied, FinnhubError) as exc:
         fundamental_error = str(exc) if isinstance(exc, FinnhubAccessDenied) else 'FINNHUB_FUNDAMENTALS_REQUEST_FAILED'
 
+    market_cap_millions = _metric(metrics, 'marketCapitalization')
+    market_cap_usd = market_cap_millions * 1_000_000.0 if market_cap_millions is not None else None
     eps = _metric(metrics, 'epsNormalizedAnnual', 'epsBasicExclExtraItemsAnnual', 'epsTTM')
     pe = _metric(metrics, 'peNormalizedAnnual', 'peBasicExclExtraTTM', 'peTTM')
     eps_growth = _metric(metrics, 'epsGrowth3Y', 'epsGrowth5Y', 'epsGrowthTTMYoy')
@@ -58,6 +60,7 @@ def build_equity_scenario(symbol: str, current_price: float | None, connector: F
         'analyst_count': analyst_count, 'consensus_target_high': high, 'consensus_target_mean': mean, 'consensus_target_median': median, 'consensus_target_low': low,
         'price_target_last_updated': last_updated, 'price_target_age_days': pt_age,
         'fundamental_eps_normalized': eps, 'fundamental_pe_normalized': pe, 'fundamental_eps_growth_3y': eps_growth,
+        'fundamental_market_cap_usd': market_cap_usd,
         'fundamental_debt_to_equity': debt_equity, 'fundamental_net_margin': net_margin, 'fundamental_current_ratio': current_ratio,
         'fundamental_price_to_book': pb, 'fundamental_book_value_per_share': bvps, 'fundamental_roe': roe,
         'fundamental_dividend_yield': dividend_yield, 'fundamental_fcf_yield': fcf_yield,
