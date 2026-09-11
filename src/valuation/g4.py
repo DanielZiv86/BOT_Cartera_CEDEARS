@@ -13,7 +13,7 @@ class G4Policy:
     minimum_excess_return_over_cash: float = 0.05
     capital_preservation_buffer: float = 0.03
     minimum_margin_over_hurdle: float = 0.02
-    max_bear_downside: float = -0.15
+    max_bear_downside: float = -0.40
     candidate_test_weight_nav: float = 0.05
     max_single_name_weight: float = 0.20
     soft_single_name_weight: float = 0.12

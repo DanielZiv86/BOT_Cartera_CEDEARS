@@ -67,6 +67,10 @@ def test_missing_valuation_never_passes():
 
 
 def test_bear_downside_can_fail_even_with_positive_expected_return():
+    # bear_target=40 produces a bear_return_net beyond the -40% tail-risk
+    # backstop (max_bear_downside default) even after it was loosened from
+    # -15% -- this is meant to represent a name analysts themselves see
+    # headed toward serious trouble, not normal single-stock volatility.
     valuation = pd.DataFrame([{
         "cedear_ticker": "TEST",
         "valuation_method": "TEST_MODEL",
@@ -74,12 +78,13 @@ def test_bear_downside_can_fail_even_with_positive_expected_return():
         "valuation_confidence": 0.95,
         "bull_target_price": 180.0,
         "base_target_price": 150.0,
-        "bear_target_price": 70.0,
+        "bear_target_price": 40.0,
         "bull_probability": 0.35,
         "base_probability": 0.55,
         "bear_probability": 0.10,
     }])
     result, _ = calculate_g4_cash_hurdle(_base_local(), valuation, _fit(), _positions())
+    assert result.iloc[0]["bear_return_net"] < G4Policy().max_bear_downside
     assert result.iloc[0]["g4_status"] == "G4_FAIL_DOWNSIDE"
 
 
