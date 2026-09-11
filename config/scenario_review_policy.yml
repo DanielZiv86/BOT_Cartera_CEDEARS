@@ -74,7 +74,17 @@ corporate:
   base_growth_floor: -0.10
   base_growth_cap: 0.20
   base_pe_floor: 6.0
-  base_pe_cap: 25.0
+  # Growth-adjusted P/E cap (roughly PEG-anchored) replaces the old flat
+  # base_pe_cap/bull_pe_cap: pe_cap = clip(pe_cap_base + pe_cap_growth_
+  # sensitivity * growth_pct, pe_cap_base, pe_cap_ceiling), using the same
+  # clipped growth rate as the EPS build-up. A no-growth name still caps at
+  # pe_cap_base (15x); a name at the growth cap (20%) reaches pe_cap_base +
+  # 1.5*20 = 45x. A flat cap systematically understated fair value and Bull
+  # upside for genuine quality/growth megacaps (NVDA, MSFT) trading at
+  # premium multiples the flat 25x/30x caps didn't allow for.
+  pe_cap_base: 15.0
+  pe_cap_growth_sensitivity: 1.5
+  pe_cap_ceiling: 55.0
   consensus_base_blend: 0.20
   bear_eps_compression: 0.18
   bear_eps_compression_cap: 0.35
@@ -87,7 +97,6 @@ corporate:
   bull_growth_increment: 0.08
   bull_growth_cap: 0.30
   bull_multiple_factor: 1.12
-  bull_pe_cap: 30.0
   minimum_bull_premium_to_base: 0.10
   consensus_bear_blend: 0.20
 
@@ -122,8 +131,10 @@ energy:
 consensus:
   dispersion_review_threshold: 0.75
   high_distance_from_median_cap: 0.50
+  low_distance_from_median_floor: 0.50
 plausibility:
   max_standard_bull_upside: 0.60
+  max_standard_bear_downside: 0.40
 probabilities:
   base_probability: 0.50
   bull_min: 0.15
@@ -148,6 +159,6 @@ policy_notes:
   - Corporate Bull must be strictly above Base, subject to the same external plausibility cap; for richly-valued names whose P/E is clipped well below the real multiple, the mechanical growth/multiple bump alone is not guaranteed to exceed a Base already pulled toward a high consensus median, so the same ordering floor used for Financials applies here too.
   - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Bear is independent of analyst low; Bull remains plausibility-capped.
+  - Corporate Bear blends toward the winsorized analyst low (consensus_bear_blend); Financials and Energy Bear remain mechanical only. High and low consensus targets are both winsorized against a single outlier analyst before any of this (median-distance floor/cap and absolute-distance-from-current floor/cap), and dispersion/probability weighting is computed from the winsorized values, not the raw ones.
   - Missing material evidence fails closed; no fallback fabricates a scenario.
   - Expected return is calculated only after scenario review.
