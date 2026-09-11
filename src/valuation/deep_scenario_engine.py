@@ -97,12 +97,23 @@ def _consensus(row,current,policy):
     if high>cap:flags.append('CONSENSUS_HIGH_WINSORIZED_FOR_PLAUSIBILITY')
     return high,med,low,dispersion,flags,min(wh,cap)
 
-def _corporate_targets(row,current,median,bull_cap,policy):
+def _corporate_targets(row,current,median,low,bull_cap,policy):
     c=policy.get('corporate',policy.get('equity',{})) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y'))
     if eps is None or eps<=0 or pe is None or pe<=0 or growth is None:raise ValueError('CORPORATE_FUNDAMENTALS_INCOMPLETE')
     g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20))); pem=_clip(pe,float(c.get('base_pe_floor',6)),float(c.get('base_pe_cap',25))); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
-    de=_num(row.get('fundamental_debt_to_equity')); extra=0 if de is None else _clip(max(de-float(c.get('debt_equity_stress_start',.75)),0)*float(c.get('debt_equity_stress_slope',.08)),0,float(c.get('max_leverage_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.18))+extra,float(c.get('bear_eps_compression',.18)),float(c.get('bear_eps_compression_cap',.35))); bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',5)),pem*float(c.get('bear_multiple_factor',.78))); bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30)))
+    de=_num(row.get('fundamental_debt_to_equity')); extra=0 if de is None else _clip(max(de-float(c.get('debt_equity_stress_start',.75)),0)*float(c.get('debt_equity_stress_slope',.08)),0,float(c.get('max_leverage_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.18))+extra,float(c.get('bear_eps_compression',.18)),float(c.get('bear_eps_compression_cap',.35)))
+    # A pure EPS-x-PE compression bear case treats every CORPORATE name
+    # identically regardless of how resilient the business actually is --
+    # unlike base (already blended 80/20 toward consensus median), it never
+    # heard what analysts' own bear case actually says. Blending it toward
+    # the real consensus low target the same way base blends toward the
+    # median corrects that: a mechanically severe compression only sticks
+    # when analysts themselves see comparable downside, instead of always
+    # manufacturing a worse bear case than the market's own low estimate.
+    raw_bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',5)),pem*float(c.get('bear_multiple_factor',.78))); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30)))
     raw_bull=eps*(1+bg)*min(float(c.get('bull_pe_cap',30)),pem*float(c.get('bull_multiple_factor',1.12))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=[]
+    if bear!=raw_bear:flags.append('CORPORATE_BEAR_CONSENSUS_BLEND_APPLIED')
     if bull>raw_bull:flags.append('CORPORATE_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
 
@@ -139,7 +150,7 @@ def _equity_review(row,policy):
         if factor!=1.0:flags.append('SCENARIO_FUNDAMENTALS_NORMALIZED_TO_TRADED_SECURITY')
         if sector=='FINANCIALS':bear,base,bull,mf=_financial_targets(scenario_row,current,median,bcap,policy)
         elif sector=='ENERGY':bear,base,bull,mf=_energy_targets(scenario_row,current,median,bcap,policy)
-        else:bear,base,bull,mf=_corporate_targets(scenario_row,current,median,bcap,policy)
+        else:bear,base,bull,mf=_corporate_targets(scenario_row,current,median,low,bcap,policy)
         flags.extend(mf)
     except ValueError as exc:blockers.append(str(exc)); bear=base=bull=None
     if bear is not None and base is not None and bull is not None and not (bear>0 and bear<base<bull):blockers.append('FUNDAMENTAL_SCENARIO_ORDER_INVALID')
