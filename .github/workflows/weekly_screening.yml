@@ -1,14 +1,30 @@
 name: Build Research MVP Screening
 
+# Fase 2: Valuation now runs here, over the FULL canonical universe, before
+# Research picks the Top-N -- equities are selected by value_score
+# (fundamentals), with the existing technical screening_score used only as a
+# binary entry-timing gate. ETFs/non-equity keep their own reserved,
+# technical-only ranked slots. See the (now-historical) shadow comparison in
+# value_research_shadow.yml for the evidence behind this cutover.
+
 on:
   workflow_dispatch:
   push:
     paths:
       - "src/research/**"
-      - "src/orchestration/build_research_screening.py"
+      - "src/orchestration/build_value_research_screening.py"
+      - "src/orchestration/build_valuation_scenarios.py"
+      - "config/value_screening_policy.yml"
+      - "config/valuation_policy.yml"
       - "tests/test_research_screening.py"
+      - "tests/test_value_screening.py"
+      - "tests/test_ranking_value_first.py"
+      - "tests/test_build_value_research_screening.py"
       - ".github/workflows/weekly_screening.yml"
 
+concurrency:
+  group: weekly-screening-main
+  cancel-in-progress: true
 permissions:
   contents: read
   actions: read
@@ -16,29 +32,37 @@ permissions:
 jobs:
   weekly-screening:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
+      FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest -q tests/test_research_screening.py
+      - run: pytest -q tests/test_research_screening.py tests/test_value_screening.py tests/test_ranking_value_first.py tests/test_build_value_research_screening.py tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py
       - name: Download serialized upstreams from same ref
         run: |
           U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$U" && test "$U" != null
           F=$(gh run list --workflow market_features.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$F" && test "$F" != null
+          Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$Q" && test "$Q" != null
           echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"
           echo "FEATURE_RUN_ID=$F" >> "$GITHUB_ENV"
-          mkdir -p data/upstream_universe data/upstream_features
+          echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
+          mkdir -p data/upstream_universe data/upstream_features data/upstream_prices
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
           gh run download "$F" --name market-feature-engine --dir data/upstream_features
-      - name: Build and certify Research MVP v1.0
+          gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
+      - name: Build broad-universe Valuation (full canonical universe, not a pre-selected Top-N)
+        run: |
+          python -m src.orchestration.build_valuation_scenarios --universe data/upstream_universe/cedear_universe_master.parquet --underlying-prices data/upstream_prices/underlying_prices.parquet --policy config/valuation_policy.yml --etf-sources config/etf_issuer_sources.yml --non-equity-policy config/non_equity_tracker_policy.yml --output-dir data/canonical/valuation_broad
+      - name: Build and certify value-first Research Top-N
         run: |
           EXPECTED=$(python -c "import json; print(json.load(open('data/upstream_universe/universe_manifest.json'))['canonical_eligible_count'])")
-          python -m src.orchestration.build_research_screening --universe data/upstream_universe/cedear_universe_master.parquet --features data/upstream_features/market_features.parquet --top-n 30 --expected-count "$EXPECTED" --min-top-data-quality 60 --output-dir data/canonical/research
+          python -m src.orchestration.build_value_research_screening --universe data/upstream_universe/cedear_universe_master.parquet --features data/upstream_features/market_features.parquet --valuation data/canonical/valuation_broad/valuation_scenarios.parquet --policy config/value_screening_policy.yml --top-n 30 --expected-count "$EXPECTED" --output-dir data/canonical/research
           python - <<'PY'
           import json, os
           from pathlib import Path
@@ -63,5 +87,11 @@ jobs:
         with:
           name: research-mvp-screening
           path: data/canonical/research/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canonical-broad-valuation-scenarios
+          path: data/canonical/valuation_broad/
           if-no-files-found: error
           retention-days: 90

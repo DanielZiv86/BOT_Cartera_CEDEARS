@@ -1,5 +1,14 @@
 name: Build Canonical Valuation Scenarios
 
+# Fase 2: the full-universe Valuation computation itself now happens in
+# weekly_screening.yml (uploaded as canonical-broad-valuation-scenarios),
+# ahead of Research's Top-N selection. This workflow no longer computes
+# Valuation -- it certifies Research's value-first Top-N, slices the
+# pre-computed broad valuation down to those exact 30 tickers, and runs
+# Deep Scenario Review V2.2 unchanged. g4_cash_hurdle.yml and everything
+# downstream is unaffected: canonical-valuation-scenarios keeps the same
+# name, shape and e2e_lineage.json fields as before the cutover.
+
 on:
   workflow_dispatch:
     inputs:
@@ -22,7 +31,6 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       GH_TOKEN: ${{ github.token }}
-      FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
       E2E_RUN_ID: E2E-MANUAL-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +38,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Run valuation and V2.2 economic regression tests
-        run: pytest -q tests/test_valuation_engines.py tests/test_valuation_v17.py tests/test_finnhub_symbol_normalization.py tests/test_vanguard_holdings_parser.py tests/test_deep_scenario_engine.py
-      - name: Resolve Research first and consume its exact pinned Universe
+      - name: Run V2.2 economic regression tests
+        run: pytest -q tests/test_deep_scenario_engine.py
+      - name: Resolve Research first and its pre-computed broad Valuation
         run: |
           R=$(gh run list --workflow weekly_screening.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); test -n "$R" && test "$R" != null
-          mkdir -p data/upstream_research data/upstream_universe data/upstream_prices
+          mkdir -p data/upstream_research data/upstream_universe data/upstream_valuation_broad
           gh run download "$R" --name research-mvp-screening --dir data/upstream_research
+          gh run download "$R" --name canonical-broad-valuation-scenarios --dir data/upstream_valuation_broad
           test -f data/upstream_research/research_lineage.json
           U=$(python -c "import json; print(json.load(open('data/upstream_research/research_lineage.json'))['universe_run_id'])")
           Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -45,11 +54,11 @@ jobs:
           for X in "$U" "$Q" "$L" "$P"; do test -n "$X" && test "$X" != null; done
           echo "RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"; echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"; echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"; echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"; echo "PRICE_RUN_ID=$Q" >> "$GITHUB_ENV"
           gh run download "$U" --name canonical-universe --dir data/upstream_universe
-          gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
-      - name: Certify Research and immutable deployment-qualified Top-N
+      - name: Certify Research and slice the pre-computed broad Valuation to the immutable Top-N
         run: |
           python - <<'PY'
           import json,os,pandas as pd
+          from pathlib import Path
           integ=json.load(open('data/upstream_research/research_integrity.json'))
           rl=json.load(open('data/upstream_research/research_lineage.json'))
           assert integ['status']=='PASS' and float(integ['coverage_pct'])==100
@@ -62,16 +71,13 @@ jobs:
           selected=r.loc[r['selected'].fillna(False).astype(bool)].sort_values('rank').copy(); assert len(selected)==30 and selected['top_n_eligibility'].fillna(False).astype(bool).all()
           tickers=selected.cedear_ticker.astype(str).str.upper().tolist(); assert len(set(tickers))==30
           out=u[u.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(out)==30; out.to_parquet('data/upstream_universe/research_topn_universe.parquet',index=False)
-          json.dump({'e2e_run_id':os.environ['E2E_RUN_ID'],'e2e_ref':os.environ['GITHUB_REF_NAME'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'feature_run_id':int(rl['feature_run_id']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers,'research_universe_handoff':rl['handoff']},open('data/upstream_universe/e2e_lineage.json','w'),indent=2)
-          PY
-      - name: Build VAL-1.8 screening valuation
-        run: |
-          python -m src.orchestration.build_valuation_scenarios --universe data/upstream_universe/research_topn_universe.parquet --underlying-prices data/upstream_prices/underlying_prices.parquet --policy config/valuation_policy.yml --etf-sources config/etf_issuer_sources.yml --non-equity-policy config/non_equity_tracker_policy.yml --output-dir data/canonical/valuation
-          python - <<'PY'
-          import json,os,pandas as pd
-          from pathlib import Path
-          df=pd.read_parquet('data/canonical/valuation/valuation_scenarios.parquet'); l=json.load(open('data/upstream_universe/e2e_lineage.json')); assert len(df)==30
-          l.update({'valuation_run_id':int(os.environ['GITHUB_RUN_ID']),'price_run_id':int(os.environ['PRICE_RUN_ID']),'local_market_run_id':int(os.environ['LOCAL_RUN_ID']),'portfolio_run_id':int(os.environ['PORTFOLIO_RUN_ID']),'valuation_count':30,'triggering_workflow':'workflow_dispatch'}); Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(l,indent=2))
+          broad=pd.read_parquet('data/upstream_valuation_broad/valuation_scenarios.parquet'); assert len(broad)==expected,(len(broad),expected)
+          outdir=Path('data/canonical/valuation'); outdir.mkdir(parents=True,exist_ok=True)
+          sliced=broad[broad.cedear_ticker.astype(str).str.upper().isin(set(tickers))].copy(); assert len(sliced)==30 and sliced.cedear_ticker.astype(str).str.upper().nunique()==30
+          sliced.to_parquet(outdir/'valuation_scenarios.parquet',index=False)
+          lineage={'e2e_run_id':os.environ['E2E_RUN_ID'],'e2e_ref':os.environ['GITHUB_REF_NAME'],'research_run_id':int(os.environ['RESEARCH_RUN_ID']),'universe_run_id':int(os.environ['UNIVERSE_RUN_ID']),'feature_run_id':int(rl['feature_run_id']),'canonical_eligible_universe_count':expected,'top_n':30,'topn_tickers':tickers,'research_universe_handoff':rl['handoff'],'valuation_run_id':int(os.environ['GITHUB_RUN_ID']),'price_run_id':int(os.environ['PRICE_RUN_ID']),'local_market_run_id':int(os.environ['LOCAL_RUN_ID']),'portfolio_run_id':int(os.environ['PORTFOLIO_RUN_ID']),'valuation_count':30,'triggering_workflow':'workflow_dispatch'}
+          Path('data/canonical/valuation/e2e_lineage.json').write_text(json.dumps(lineage,indent=2))
+          print(json.dumps(lineage,indent=2))
           PY
       - name: Run mandatory Deep Scenario Review V2.2 on all Top-N
         run: |
