@@ -32,6 +32,19 @@ penalties:
   correlation_penalty_max: 0.03
   concentration_penalty_max: 0.03
 
+# Explicit conservative policy assumption, not derived from historical CCL/brecha
+# data (no such data source is connected yet). Models the risk that capital
+# controls tighten or the CCL channel becomes rationed/administratively
+# compressed before exit, forcing settlement at a materially worse effective
+# conversion rate than today's market CCL. This is a market-wide/currency risk
+# factor, applied uniformly to every candidate's Base case, and is evaluated as
+# its own hard downside veto -- never blended into expected return, and kept
+# separate from the fundamental Bear/Stress veto so a failure's cause (company
+# risk vs. currency/regulatory risk) is always auditable.
+fx_regulatory_risk:
+  ccl_stress_haircut: 0.25
+  max_fx_stress_downside: -0.20
+
 target_review:
   base_upside_review_threshold: 0.75
   bull_upside_review_threshold: 1.25
@@ -58,3 +71,4 @@ policy_notes:
   - A projected single-name weight above 20% is a hard concentration failure.
   - Execution readiness remains separate from analytical attractiveness.
   - Production thresholds are not relaxed merely to create deployment candidates.
+  - FX/regulatory stress is a market-wide risk factor evaluated once per candidate against a degraded CCL, independent of and in addition to the fundamental Bear/Stress veto.

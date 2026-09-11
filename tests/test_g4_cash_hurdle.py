@@ -83,6 +83,55 @@ def test_bear_downside_can_fail_even_with_positive_expected_return():
     assert result.iloc[0]["g4_status"] == "G4_FAIL_DOWNSIDE"
 
 
+def test_fx_regulatory_stress_can_fail_even_when_fundamental_downside_passes():
+    # Base case has no organic upside (target == current), so it barely
+    # survives on today's CCL, but collapses well past -20% once a 25% CCL
+    # haircut is applied. The Bear case, evaluated at today's CCL against a
+    # lower target, still clears the -15% fundamental veto on its own --
+    # this failure is specifically about currency/regulatory risk.
+    valuation = pd.DataFrame([{
+        "cedear_ticker": "TEST",
+        "valuation_method": "TEST_MODEL",
+        "valuation_status": "VALUATION_READY",
+        "valuation_confidence": 0.90,
+        "current_price": 100.0,
+        "bull_target_price": 140.0,
+        "base_target_price": 100.0,
+        "bear_target_price": 90.0,
+        "bull_probability": 0.25,
+        "base_probability": 0.55,
+        "bear_probability": 0.20,
+    }])
+    result, metrics = calculate_g4_cash_hurdle(_base_local(), valuation, _fit(), _positions(), policy=G4Policy())
+    row = result.iloc[0]
+    assert row["bear_return_net"] >= -0.15
+    assert row["fx_stress_return_net"] < -0.20
+    assert row["g4_status"] == "G4_FAIL_FX_REGULATORY_STRESS"
+    assert row["g4_reason"] == "FX_REGULATORY_STRESS_DOWNSIDE_EXCEEDS_POLICY"
+    assert metrics["fx_regulatory_stress_fail_count"] == 1
+
+
+def test_fx_regulatory_stress_threshold_is_policy_configurable():
+    valuation = pd.DataFrame([{
+        "cedear_ticker": "TEST",
+        "valuation_method": "TEST_MODEL",
+        "valuation_status": "VALUATION_READY",
+        "valuation_confidence": 0.90,
+        "current_price": 100.0,
+        "bull_target_price": 140.0,
+        "base_target_price": 125.0,
+        "bear_target_price": 90.0,
+        "bull_probability": 0.25,
+        "base_probability": 0.55,
+        "bear_probability": 0.20,
+    }])
+    # Same inputs as the baseline PASS case, but a much stricter FX-stress
+    # threshold should now bind instead.
+    strict_policy = G4Policy(max_fx_regulatory_stress_downside=-0.01)
+    result, _ = calculate_g4_cash_hurdle(_base_local(), valuation, _fit(), _positions(), policy=strict_policy)
+    assert result.iloc[0]["g4_status"] == "G4_FAIL_FX_REGULATORY_STRESS"
+
+
 def test_invalid_probabilities_block_ticker():
     valuation = pd.DataFrame([{
         "cedear_ticker": "TEST",
