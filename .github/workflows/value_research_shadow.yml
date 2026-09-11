@@ -1,0 +1,93 @@
+name: Value-First Research Shadow
+
+# SHADOW ONLY. Builds a fundamentals-first Top-30 candidate (equities ranked
+# by value_score, technical screening_score used only as a binary entry-timing
+# gate; ETFs/non-equity keep their own reserved technical-only slots) and
+# compares it against the current production technical-only Research Top-30.
+# Does NOT feed production Research, Valuation, G4, Risk or Committee, and
+# does NOT dispatch any of those workflows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch/commit carrying the value-screening code (this launcher itself must live on main to be dispatchable; the implementation can stay on a feature branch until cutover)"
+        required: true
+        default: "claude/modest-maxwell-xnwsfi"
+        type: string
+      universe_run_id:
+        description: "build_universe.yml run id (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+      features_run_id:
+        description: "market_features.yml run id (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+      prices_run_id:
+        description: "underlying_prices.yml run id (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+      current_research_run_id:
+        description: "weekly_screening.yml run id, for the comparison baseline (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  value-research-shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+      FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "${{ inputs.code_ref }}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Regression tests
+        run: pytest -q tests/test_value_screening.py tests/test_ranking_value_first.py tests/test_research_screening.py tests/test_valuation_engines.py
+      - name: Resolve upstream runs on this ref
+        run: |
+          U="${{ inputs.universe_run_id }}"
+          if [ -z "$U" ]; then U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$U" && test "$U" != null
+          F="${{ inputs.features_run_id }}"
+          if [ -z "$F" ]; then F=$(gh run list --workflow market_features.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$F" && test "$F" != null
+          Q="${{ inputs.prices_run_id }}"
+          if [ -z "$Q" ]; then Q=$(gh run list --workflow underlying_prices.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$Q" && test "$Q" != null
+          R="${{ inputs.current_research_run_id }}"
+          if [ -z "$R" ]; then R=$(gh run list --workflow weekly_screening.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$R" && test "$R" != null
+          echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"
+          echo "FEATURES_RUN_ID=$F" >> "$GITHUB_ENV"
+          echo "PRICES_RUN_ID=$Q" >> "$GITHUB_ENV"
+          echo "CURRENT_RESEARCH_RUN_ID=$R" >> "$GITHUB_ENV"
+          mkdir -p data/upstream_universe data/upstream_features data/upstream_prices data/upstream_current_research
+          gh run download "$U" --name canonical-universe --dir data/upstream_universe
+          gh run download "$F" --name market-feature-engine --dir data/upstream_features
+          gh run download "$Q" --name underlying-price-layer --dir data/upstream_prices
+          gh run download "$R" --name research-mvp-screening --dir data/upstream_current_research
+      - name: Build broad-universe valuation scenarios (full canonical universe, not a pre-selected Top-N)
+        run: |
+          python -m src.orchestration.build_valuation_scenarios --universe data/upstream_universe/cedear_universe_master.parquet --underlying-prices data/upstream_prices/underlying_prices.parquet --policy config/valuation_policy.yml --etf-sources config/etf_issuer_sources.yml --non-equity-policy config/non_equity_tracker_policy.yml --output-dir data/canonical/value_research_shadow_valuation
+      - name: Build value-first shadow Top-30 and comparison against current production Top-30
+        run: |
+          python -m src.orchestration.build_value_research_shadow --universe data/upstream_universe/cedear_universe_master.parquet --features data/upstream_features/market_features.parquet --valuation data/canonical/value_research_shadow_valuation/valuation_scenarios.parquet --current-research data/upstream_current_research/research_screening.parquet --policy config/value_screening_policy.yml --output-dir data/canonical/value_research_shadow
+      - uses: actions/upload-artifact@v4
+        with:
+          name: value-research-shadow
+          path: |
+            data/canonical/value_research_shadow_valuation/
+            data/canonical/value_research_shadow/
+          if-no-files-found: error
+          retention-days: 90
