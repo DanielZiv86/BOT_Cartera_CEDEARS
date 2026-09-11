@@ -24,7 +24,6 @@ class G4Policy:
     correlation_penalty_max: float = 0.03
     concentration_penalty_max: float = 0.03
     fx_regulatory_stress_ccl_haircut: float = 0.25
-    max_fx_regulatory_stress_downside: float = -0.20
 
     @property
     def cash_hurdle(self) -> float:
@@ -83,17 +82,19 @@ def calculate_g4_cash_hurdle(
     translated through the robust market CCL while future local value is derived
     from the underlying target price and the validated Comafi ratio.
 
-    A separate, zero-probability FX/regulatory Stress scenario is evaluated for
-    every candidate alongside the fundamental Bull/Base/Bear/Stress fan: the Base
-    target realized through a degraded CCL (policy.fx_regulatory_stress_ccl_haircut
-    below today's market CCL), representing capital-control tightening or forced
-    settlement through a worse conversion channel at exit. This is a market-wide
-    risk factor, not an idiosyncratic one, so the same haircut applies uniformly
-    to every candidate. It is never blended into expected return -- like the
-    fundamental Stress scenario, it is a hard downside veto only, kept auditably
-    separate from the fundamental downside veto (G4_FAIL_FX_REGULATORY_STRESS vs
-    G4_FAIL_DOWNSIDE) so a failure's cause is never ambiguous between "the company
-    is risky" and "the currency channel is risky".
+    A separate, zero-probability FX/regulatory Stress scenario is computed for
+    every candidate alongside the fundamental Bull/Base/Bear fan: the Base target
+    realized through a degraded CCL (policy.fx_regulatory_stress_ccl_haircut below
+    today's market CCL), representing capital-control tightening or forced
+    settlement through a worse conversion channel at exit. It is NOT a G4 PASS/FAIL
+    gate: a CEDEAR holder facing exactly this scenario can convert into the
+    underlying foreign shares (canje via custody transfer) and exit in USD abroad
+    instead of selling locally through a degraded CCL, so treating this as an
+    individual hard veto double-counted a risk that has a real, if imperfect,
+    hedge. fx_stress_return_net is still reported and still feeds the allocator's
+    per-position stress budget (src/portfolio/allocation.py), which is where
+    currency/regulatory risk is actually managed now -- by sizing, not by
+    excluding a name outright.
     """
     policy = policy or G4Policy()
     local = local_market.copy()
@@ -189,7 +190,6 @@ def calculate_g4_cash_hurdle(
             "minimum_margin_over_hurdle": policy.minimum_margin_over_hurdle,
             "max_bear_downside_allowed": policy.max_bear_downside,
             "fx_regulatory_stress_ccl_haircut": policy.fx_regulatory_stress_ccl_haircut,
-            "max_fx_regulatory_stress_downside_allowed": policy.max_fx_regulatory_stress_downside,
             "blockers": blockers.copy(),
         }
 
@@ -248,7 +248,6 @@ def calculate_g4_cash_hurdle(
         risk_adjusted_er = expected - uncertainty_penalty - correlation_penalty - concentration_penalty
         net_benefit = risk_adjusted_er - policy.cash_hurdle
         downside_ok = bear_return >= policy.max_bear_downside
-        fx_stress_downside_ok = fx_stress_return >= policy.max_fx_regulatory_stress_downside
         return_ok = net_benefit >= policy.minimum_margin_over_hurdle
 
         if hard_concentration_fail:
@@ -257,15 +256,12 @@ def calculate_g4_cash_hurdle(
         elif not downside_ok:
             g4_status = "G4_FAIL_DOWNSIDE"
             reason = "BEAR_DOWNSIDE_EXCEEDS_POLICY"
-        elif not fx_stress_downside_ok:
-            g4_status = "G4_FAIL_FX_REGULATORY_STRESS"
-            reason = "FX_REGULATORY_STRESS_DOWNSIDE_EXCEEDS_POLICY"
         elif not return_ok:
             g4_status = "G4_FAIL_RETURN"
             reason = "INSUFFICIENT_RISK_ADJUSTED_MARGIN_VS_CASH"
         else:
             g4_status = "G4_PASS"
-            reason = "POSITIVE_MARGIN_VS_CASH_AND_DOWNSIDE_AND_FX_STRESS_COMPATIBLE"
+            reason = "POSITIVE_MARGIN_VS_CASH_AND_DOWNSIDE_COMPATIBLE"
 
         result.update({
             "bull_return_net": bull_return,
@@ -305,8 +301,6 @@ def calculate_g4_cash_hurdle(
     else:
         cash_optimality = "CASH_OPTIMAL_BY_MODEL"
 
-    fx_stress_fail_count = int((result_df["g4_status"] == "G4_FAIL_FX_REGULATORY_STRESS").sum()) if total else 0
-
     metrics = {
         "methodology_version": "G4-1.0",
         "ticker_count": total,
@@ -314,12 +308,11 @@ def calculate_g4_cash_hurdle(
         "blocked_count": blocked_count,
         "pass_count": pass_count,
         "fail_count": evaluated_count - pass_count,
-        "fx_regulatory_stress_fail_count": fx_stress_fail_count,
         "cash_hurdle": policy.cash_hurdle,
         "cash_optimality_status": cash_optimality,
         "deployment_decision": "ALLOW_NEW_DEPLOYMENT" if pass_count > 0 else ("RESEARCH_BLOCKED" if blocked_count > 0 else "NO_NEW_DEPLOYMENT"),
         "return_currency": "USD_ECONOMIC_RETURN",
         "execution_separate_from_analytical_g4": True,
-        "note": "G4 PASS requires complete scenario valuation, validated local data, quantitative portfolio fit, sufficient risk-adjusted margin vs cash, compatible bear downside, and compatible FX/regulatory stress downside.",
+        "note": "G4 PASS requires complete scenario valuation, validated local data, quantitative portfolio fit, and sufficient risk-adjusted margin vs cash with compatible bear downside. FX/regulatory stress is computed and reported but is not a PASS/FAIL gate -- it feeds the allocator's position-sizing stress budget instead, since a CEDEAR holder can hedge this risk via canje (conversion to the underlying foreign shares) rather than being forced through a degraded local CCL.",
     }
     return result_df, metrics
