@@ -1,141 +1,79 @@
 # BOT Cartera CEDEARS — Project State
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-11 (end of session)_
 
 ## Objective
-Autonomous, professional CEDEAR portfolio-management pipeline for a 12-month investment horizon (maximum reasonable horizon 24 months), with capital preservation in USD as the primary constraint and eventual home purchase in USD as the economic objective.
+
+Autonomous, professional CEDEAR portfolio-management pipeline for a 12-month investment horizon (maximum reasonable horizon 24 months), with capital preservation in USD as the primary constraint and a home-purchase objective: **$20,000 additional USD by 2028-09-11** (24 months from 2026-09-11), on top of current NAV (~$49,087 as of this session).
 
 The pipeline must not manufacture deployment candidates. `NO_NEW_DEPLOYMENT` remains valid unless downstream stages, using consistent lineage and verified data, justify otherwise.
 
-## Target architecture / contract
+## Current production architecture (post Fase 2, 2026-09-11)
 
-`Comafi universe -> BYMA/Caja negotiability validation -> real eligible universe -> Research 100% -> complete ranking -> Top-30 -> Valuation 30/30 -> G4 30/30 -> Execution Gate -> Risk -> Committee`
+```
+Comafi universe -> BYMA/Caja negotiability validation -> real eligible universe (~235-304 instruments, count is dynamic)
+  -> Valuation (FULL universe, broad-universe Finnhub consensus scenario)
+  -> Research value-first ranking (equities ranked by value_score/fundamentals;
+     technical screening_score is a binary entry-timing gate only; ETFs keep a
+     separate technical-only ranked track) -> immutable Top-30
+  -> Deep Scenario Review V2.2 (sector-aware: CORPORATE/FINANCIALS/ENERGY archetypes)
+  -> G4 Cash Hurdle -> Risk -> Committee (allocator ranks G4_PASS by risk_adjusted_er,
+     risk-budget fill; goal_tracking reports pace vs the $ objective)
+```
 
-Key rules:
-- Screening is mandatory for 100% of the canonical eligible universe.
-- Deep research/valuation is limited to the immutable Research Top-30.
+**This is a change from the architecture description in the previous version of this file** (which had Research/technical-screening picking the Top-30 *before* Valuation ran on just those 30). That old order was found, and fixed, this session — see "Fase 2" below.
+
+Key rules (unchanged):
+- Valuation now runs on 100% of the canonical eligible universe (used to be Top-30 only).
+- Deep Scenario Review / G4 remain limited to the immutable Top-30, selected by the value-first ranking.
 - G4 requires Bull/Base/Bear scenarios, probabilities, net expected return, downside, costs, uncertainty penalty and explicit comparison versus cash.
 - No artificial deletion/replacement of Top-30 names to force G4 success.
 - Lineage must remain pinned across stages.
-- Universe counts must be dynamic, never hardcoded to historical 316/305 values.
+- Universe counts must be dynamic, never hardcoded to historical fixed values (316/305/304 — the exact count moves as the canonical universe is refreshed; treat any hardcoded count as a bug).
 - IWDA remains an explicit mandate exception and must remain inside the universe with normal screening/scoring and traceability.
 
-## Universe reconciliation work completed
-A long reconciliation/debugging cycle was performed around the official universe and identifiers:
-- baseline
-- Banco Comafi catalogue
-- BYMA/Caja official identity / negotiability
-- inclusions
-- mandate exceptions
+## Session 2026-09-11 summary (this session)
 
-The canonical eligible universe is currently **304 instruments**. A previous 305-instrument universe contained false-positive/stale eligibility and therefore downstream Research/Valuation/G4 based on 305 became obsolete.
+Started from a working but economically stuck pipeline: G4 had **never produced a single PASS candidate** despite passing all its own unit tests. Root-caused and fixed a chain of real economic/methodology bugs, each validated against real market data via GitHub Actions before merging, in this order:
 
-The Universe Gate eventually passed with the corrected canonical universe.
+1. **Goals-based hurdle tracking** (PR #12) — `src/portfolio/goals.py`, `src/orchestration/build_investment_committee.py`: tracks required annual return toward the $20k/24mo objective; informational, never gates.
+2. **ENERGY archetype missing bull-ordering floor** (PR #13) — `deep_scenario_engine.py::_energy_targets`.
+3. **CORPORATE bear case over-harsh (mechanical-only) + megacap/tech ranking tilt** (PR #15).
+4. **Bear downside backstop loosened -15% -> -40%** (PR #16) — the old -15% floor was found (via `g4_sensitivity_audit.py` against real data) to reject virtually every real equity regardless of quality; real risk limiting now lives in the allocator's stress budget, not a per-name absolute veto.
+5. **FX/regulatory-stress individual veto removed** (PR #17) — still computed and fed to the allocator's stress budget, but no longer an individual PASS/FAIL gate (a CEDEAR holder can hedge via canje/conversion to the underlying).
+6. **Winsorize consensus low + growth-adjusted P/E cap for CORPORATE** (PR #18) — symmetric winsorization of analyst high/low targets; P/E cap now scales with growth instead of a flat 25x/30x (was structurally suppressing Bull upside for megacap/growth names like NVDA, MSFT).
+7. **Widened confidence-to-Bull probability range + removed double-counted per-name margin stacking** (PR #19) — `bull_min/bull_max` widened 15-27% -> 12-32%; `minimum_margin_over_hurdle` 2% -> 0.5%; zeroed `dynamic_equity_margin`'s `base_equity_risk_buffer`/`uncertainty_buffer_max` (both were double-charging risk already priced elsewhere). **This produced the first G4_PASS candidates all session: 4/30 (DAL, NVDA, GE, MSFT).**
+8. **Extended consensus bear-blend from CORPORATE to FINANCIALS/ENERGY** (PR #20) — for consistency; confirmed firing correctly on real FINANCIALS names (AXP, WFC) in production.
+9. **Fase 2 cutover** (PR #21) — the big one: reordered the production pipeline so Valuation runs on the full universe *before* Research picks the Top-30, and Research selects equities by fundamentals (`value_score`) instead of technical momentum, with technical screening demoted to a binary entry-timing gate. Motivated by hard evidence: production's old technical-only Top-30 **did not even contain** the 4 tickers that pass G4 (DAL, NVDA, GE, MSFT) — the momentum/trend screen was structurally excluding exactly the names the valuation engine could validate as attractively priced.
 
-## Current E2E lineage
+**Validated on real production data on `main` after merge**: full chain `weekly_screening -> valuation_scenarios -> g4_cash_hurdle -> decisional_risk -> investment_committee` ran green end-to-end with **zero code changes needed downstream of Research** (g4/risk/committee untouched). Result: **4/30 G4_PASS** (DAL +3.87pp, NVDA +3.27pp, GE +1.56pp, MSFT +1.11pp above hurdle) — exact match to the shadow prediction. Committee's final decision this cycle was `HOLD_CASH_NO_ACTION` — **not a regression**, just the pre-existing fail-closed governance rule refusing to deploy while any Top-30 ticker is `BLOCKED_BY_DATA` (3/30 were this run).
 
-### Universe
-- Current canonical eligible count: **304**
-- Universe Gate: PASS on the corrected lineage.
+## Open items for next session
 
-### Research
-A new Research run was manually triggered after the universe was corrected.
-- Run: `34159055890`
-- Result: PASS
-- Expected contract: **304/304 Research coverage** and immutable Top-30.
-
-### Valuation
-The old valuation workflow contained a hardcoded `assert len(r) == 305` and historical 305 assumptions.
-
-This was corrected so counts derive dynamically from `canonical_eligible_count` / actual Top-N instead of fixed 305/316 values.
-
-The new Research lineage successfully produced a valid new Valuation run/artifact.
-- Valuation run consumed by current G4: `34159086076`
-- Contract validated in G4 download step: Top-N = 30, valuation_count = 30, valuation parquet = 30 rows, valuation tickers = immutable Research Top-30.
-
-### G4
-Initial G4 failure showed cross-layer symbol identity mismatches in `portfolio_fit_quantitative.parquet`:
-- `BA.C` vs `BA`
-- `BBV` vs `BBVA`
-- `TRVV` vs `TRV`
-
-Commit `0a792f58ba0e53fedb9303419bfc601770c4330d` added normalization for those identities.
-
-Manual G4 run:
-- Run: `34159513239`
-- Job: `101858201194`
-- Workflow number: Build Valuation G4 Cash Hurdle #138
-- Result: FAILED
-
-The failure is **not** missing Top-30 identities anymore. The exact current failure is:
-
-`AssertionError: ('data/upstream_local/cedear_local_market.parquet', 31)`
-
-Reason: after alias normalization, the local-market layer returns 31 rows for 30 Top-N identities. At least one normalized identity has multiple upstream rows. A simple normalized `isin()` filter therefore violates the required one-to-one Top-30 contract.
-
-The current lineage pinned by that G4 run was:
-- Valuation run: `34159086076`
-- Local Market run: `34158337936`
-- Portfolio State run: `34138776023`
-
-G4 unit tests themselves passed: **8/8**.
-
-## Latest fix applied
-Commit:
-- `45a8f57e0ed761829aae9e324626628f5ed4e8dd`
-
-File:
-- `.github/workflows/g4_cash_hurdle.yml`
-
-The G4 candidate restriction was changed from a bulk normalized `isin()` filter to strict deterministic **one Research Top-30 identity -> one upstream row** resolution:
-1. Prefer exact raw ticker match.
-2. Only use alias-equivalent match as fallback.
-3. Fail explicitly if fallback is ambiguous.
-4. Do not reuse the same upstream row for two Research candidates.
-5. Preserve the Research ticker as canonical output identity.
-6. Assert exactly 30 rows and exactly the immutable Top-30.
-
-This intentionally avoids `drop_duplicates`, because silently dropping duplicates could hide a real identity problem and alter economic lineage.
-
-## Exact next action
-Run manually from `main`:
-
-**Build Valuation G4 Cash Hurdle**
-
-This new run must use commit `45a8f57e...` or later.
-
-Then inspect G4 before advancing. Do **not** rerun Research or Valuation unless G4 proves an upstream lineage/data inconsistency.
-
-If G4 passes, validate:
-- 30/30 candidates accounted for
-- evaluated + blocked = 30
-- no artificial Top-30 mutation
-- execution-ready / not-execution-ready classification economically justified
-- G4 cash hurdle remains intact
-
-Only after G4 is valid continue:
-
-`Execution Gate -> Risk -> Committee`
-
-Do not advance Risk/Committee on a broken or inconsistent G4 lineage.
+1. **Investigate the 3 `BLOCKED_BY_DATA` tickers** in the most recent real Committee run — this is currently the only thing standing between "4 real G4_PASS candidates" and an actual deployment decision. Pull the latest `investment_committee.yml`/`g4_cash_hurdle.yml` artifact on `main`, find which 3 tickers blocked and why (missing analyst coverage, stale price target, sector unverified, etc.), and decide whether it's a data-source gap or a policy fail-closed appropriately.
+2. **Decide the fate of the shadow workflows** (`value_research_shadow.yml`, `value_research_shadow_g4.yml`, `src/orchestration/build_value_research_shadow.py`) — their whole purpose (compare shadow value-first vs. production technical-only) is moot now that production *is* value-first. Flagged in PR #21 as optional post-cutover housekeeping, not done yet. Also disable/reconsider the Friday-22:00-UTC cron on `value_research_shadow.yml` (added in PR #14 specifically to build evidence for the Fase 2 decision, which is now made).
+3. **FINANCIALS/ENERGY still lack a growth-adjusted-cap-equivalent fix.** Deliberately not extended this session (doesn't map cleanly: FINANCIALS is P/B-based and already ROE-sensitive via `fair_pb`; ENERGY is already cyclically earnings/FCF-normalized). Revisit only if a real FINANCIALS/ENERGY name is later found stuck on a similar flat-cap distortion the way NVDA/MSFT were for CORPORATE.
+4. **Re-run the full chain periodically** (or set up a Routine) now that the pipeline is live, to see how the 4-PASS-candidate set evolves as prices/consensus targets move, and to catch the data gaps in item 1 over time rather than only on manual dispatch.
+5. No FX/regulatory or bear-downside threshold work is pending — those are considered settled for now (see permanent safeguards below for why they were loosened, so they aren't re-tightened by mistake without re-running `g4_sensitivity_audit.py` first).
 
 ## Important design lessons / permanent safeguards
+
 - Never hardcode universe size.
 - Never rerun an old failed workflow expecting it to use a newer workflow definition; GitHub re-runs execute the workflow definition associated with the original run/commit.
 - Manual `workflow_dispatch` of G4 chooses the latest successful Valuation run; confirm it belongs to the desired Research lineage.
 - Symbol aliases are an identity-resolution problem, not merely a string-replacement problem.
 - One-to-many matches must fail closed rather than be silently deduplicated.
 - Research Top-30 is immutable downstream; downstream stages may classify/block candidates but must not substitute names.
-- Keep `NO_NEW_DEPLOYMENT` unless the full verified downstream process supports deployment.
-
-## Relevant recent commits
-- `d131321b` — removed historical fixed 305 assumptions from Valuation and made universe/Top-N counts dynamic.
-- `0a792f58ba0e53fedb9303419bfc601770c4330d` — first G4 alias normalization for BA.C/BA, BBV/BBVA, TRVV/TRV.
-- `45a8f57e0ed761829aae9e324626628f5ed4e8dd` — strict one-to-one Top-30 identity resolution in G4 candidate layers; current head/fix to validate next.
+- Keep `NO_NEW_DEPLOYMENT`/`HOLD_CASH_NO_ACTION` unless the full verified downstream process supports deployment.
+- **A per-name absolute veto/margin is easy to justify individually but tends to duplicate a risk already priced elsewhere or already handled at the portfolio level** (this session found and fixed this pattern four separate times: Bear downside veto, FX-stress veto, `minimum_margin_over_hurdle`, `dynamic_equity_margin`'s buffers). When G4 rejects everything, check for double-counting before loosening a threshold.
+- **The selection stage (which names even reach Valuation/G4) can matter more than the valuation methodology itself.** All the archetype/probability/margin fixes this session only closed part of the gap; the Fase 2 selection-order cutover is what actually produced PASS candidates, because the old technical-momentum screen was excluding the right names entirely, upstream of any G4 logic.
+- `weekly_screening.yml` / `valuation_scenarios.yml` are only ever validated with full pinned lineage when run **from `main`** (their upstream-resolution steps filter `gh run list` by the triggering branch, which only matches for the actual upstream data workflows on `main`). Testing a change to these two files pre-merge is therefore limited to validating the core logic in isolation (unit tests, or a manual script invocation with hand-built fixtures) — not a full pinned dry run on a feature branch, unlike the shadow workflows (which decouple "what branch dispatches" from "what code is checked out" via a `code_ref` input specifically for this purpose).
 
 ## Do not regress to
-- 316 historical universe assumptions.
-- 305 historical universe assumptions.
-- deleting problematic G4 tickers to make 30/30 pass.
+
+- 316/305/304 (or any other) historical universe-size assumptions — the count is dynamic.
+- deleting problematic G4/Research candidates to make 30/30 pass.
 - generic token matching for BYMA/Caja identity.
 - unpinned or mixed lineage between Research, Valuation, G4, Risk and Committee.
+- re-tightening `max_bear_downside` back toward -15% or restoring the FX-stress individual veto without re-running `g4_sensitivity_audit.py` against current data first — both were loosened this session based on real evidence that they rejected virtually every real candidate, not because risk no longer matters (the risk is still priced, just at the portfolio/allocator level instead of a per-name absolute gate).
+- reverting Research to technical/momentum-only Top-30 selection — this was the root cause of G4 never finding a candidate all session; see Fase 2 above.
