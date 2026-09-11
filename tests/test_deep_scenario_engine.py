@@ -9,7 +9,7 @@ POLICY={
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
  'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10},
- 'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50,'low_distance_from_median_floor':.50},'plausibility':{'max_standard_bull_upside':.60,'max_standard_bear_downside':.40},'probabilities':{'base_probability':.50,'bull_min':.15,'bull_max':.27,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
+ 'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50,'low_distance_from_median_floor':.50},'plausibility':{'max_standard_bull_upside':.60,'max_standard_bear_downside':.40},'probabilities':{'base_probability':.50,'bull_min':.12,'bull_max':.32,'bull_floor':.08,'bull_ceiling':.35,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
 
 def _row(ticker,current,high,median,low,eps,pe,growth,confidence=.60,de=.8,sector='Technology',**extra):
  r={'cedear_ticker':ticker,'underlying_ticker':ticker,'valuation_engine_type':'EQUITY','valuation_method':'FINNHUB_ANALYST_CONSENSUS_SCREENING_V4','valuation_status':'VALUATION_READY','current_price':current,'bull_target_price':high,'base_target_price':median,'bear_target_price':low,'consensus_target_high':high,'consensus_target_median':median,'consensus_target_low':low,'fundamental_eps_normalized':eps,'fundamental_pe_normalized':pe,'fundamental_eps_growth_3y':growth,'fundamental_debt_to_equity':de,'valuation_confidence':confidence,'eps_unit':'UNDERLYING_SECURITY','target_price_unit':'UNDERLYING_SECURITY','industry_sector_official':sector,'issuer_country_normalized':'US','underlying_market_official':'NASDAQ GS'}; r.update(extra); return r
@@ -90,6 +90,19 @@ def test_rds_verified_two_share_ads_and_extreme_consensus_cap():
 
 def test_probabilities_are_dynamic():
  a=_row('AAA',100,130,110,80,5,20,.10,.9); b=_row('BBB',100,130,110,80,5,20,.10,.3); out,_=validate_scenarios(pd.DataFrame([a,b]),POLICY); assert out.iloc[0]['bull_probability']!=out.iloc[1]['bull_probability']
+
+def test_widened_bull_range_lets_high_confidence_pull_more_weight_off_bear():
+ # bull and bear are already a zero-sum pair (base_probability is fixed at
+ # 50%), so confidence already moves weight between them symmetrically --
+ # the fix here is a wider bull_min/bull_max band, not a new mechanism.
+ # At near-max confidence a well-covered name should now reach close to the
+ # widened bull_max (32%), pulling bear correspondingly lower than the old
+ # 27%-cap regime allowed (bear floor around 18% instead of 23%).
+ out,_=validate_scenarios(pd.DataFrame([_row('HICONF',100,140,120,85,5,18,.10,.97,.3,sector='Technology')]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bull_probability']>0.29
+ assert r['bear_probability']<0.20
+ assert abs((r['bull_probability']+r['base_probability']+r['bear_probability'])-1.0)<1e-9
 
 def test_bbv_cedear_alias_resolves_verified_bbva_underlying_one_to_one():
  row=_row('BBV',18.5,23,20,14,1.2,15,.08,.7,.4,sector='Financial Services',issuer_country_normalized='ES',underlying_market_official='New York',underlying_ticker='BBVA',fundamental_book_value_per_share=12,fundamental_price_to_book=1.5,fundamental_roe=14)

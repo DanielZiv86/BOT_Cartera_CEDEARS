@@ -6,17 +6,36 @@ cash_hurdle:
   cash_return_assumption: 0.00
   minimum_excess_return_over_cash: 0.05
   capital_preservation_buffer: 0.03
-  minimum_margin_over_hurdle: 0.02
+  # G4's job is to screen out what isn't economically rational to buy over
+  # cash -- not to individually prove each candidate against a large,
+  # separate hurdle. The real selection-for-the-goal work belongs to the
+  # allocator (ranks by risk_adjusted_er, risk-budget rank-fill among every
+  # PASS candidate) and the Committee's goal_tracking (reports whether the
+  # resulting deployment's blended return is on pace for the actual $
+  # objective) -- both already built and already consume this ranking.
+  # Requiring each name to clear cash_hurdle by another 2 full points on top
+  # was an individual absolute-proof bar duplicating that portfolio-level
+  # job; a small non-zero margin (0.5%) still exists so a name has to clear
+  # cash by a real amount, not by measurement noise.
+  minimum_margin_over_hurdle: 0.005
 
-# Added on top of the base 2% margin for single-name equities. Epistemic
-# uncertainty remains separately penalized. Downside is NOT added again here:
-# it is already represented in Bull/Base/Bear expected return and enforced by
-# the hard Bear preservation gate (see risk.max_bear_downside below). The G4
-# sensitivity audit showed that removing the duplicate downside margin does
-# not manufacture any PASS.
+# Both components below were found to double-charge a risk already priced
+# elsewhere and are zeroed accordingly (kept configurable, not deleted, for
+# future recalibration):
+# - base_equity_risk_buffer priced in single-name execution cost, but
+#   brokerage and spread are already netted directly into every scenario
+#   return (see execution.brokerage_rate_per_side and the per-candidate
+#   spread assumption in g4.py) -- charging it again here was redundant.
+# - uncertainty_buffer_max scaled with (1-confidence), but confidence-based
+#   uncertainty is already subtracted directly from risk_adjusted_er via
+#   penalties.uncertainty_penalty_max below -- the same signal was being
+#   charged twice, the same pattern already fixed for Bear/FX-stress
+#   double-counting earlier in this file's history.
+# - downside_buffer_max was already zeroed for the equivalent reason
+#   (Bear preservation gate below already enforces this).
 dynamic_equity_margin:
-  base_equity_risk_buffer: 0.015
-  uncertainty_buffer_max: 0.020
+  base_equity_risk_buffer: 0.000
+  uncertainty_buffer_max: 0.000
   downside_buffer_max: 0.000
 
 # max_bear_downside is a per-name tail-risk backstop, not the portfolio's
@@ -85,7 +104,8 @@ audit_contract:
 policy_notes:
   - G4 consumes only post-review Bull/Base/Bear scenarios; expected return is recomputed after review.
   - Missing material scenario evidence fails closed and cannot receive G4_PASS.
-  - Single-name equities require the base margin plus dynamic equity and uncertainty buffers.
+  - G4_PASS means "clears cash by a real, non-noise margin" -- a screen, not proof a name alone justifies the goal. Selecting and sizing among every PASS candidate for the actual objective is the allocator's (rank by risk_adjusted_er, risk-budget fill) and Committee's (goal_tracking pace) job, not a bigger per-name hurdle here.
+  - dynamic_equity_margin's base_equity_risk_buffer and uncertainty_buffer_max are zeroed: execution cost is already netted into every scenario return, and confidence-based uncertainty is already subtracted via penalties.uncertainty_penalty_max -- both were double-charging a risk priced elsewhere, the same pattern already fixed for Bear/FX-stress.
   - Downside is represented by scenario-weighted expected return and the hard Bear preservation gate; it is not charged a third time in the dynamic equity margin.
   - Bear_Return_Net must remain above the per-name tail-risk backstop (-40%); real position/portfolio-level downside limiting is the allocator's stress budget, not this gate.
   - A projected single-name weight above 20% is a hard concentration failure.
