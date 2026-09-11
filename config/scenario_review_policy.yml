@@ -68,6 +68,7 @@ sector_overrides:
   RDS: ENERGY
   SHEL: ENERGY
   V: CORPORATE
+  MA: CORPORATE
 
 corporate:
   base_growth_floor: -0.10
@@ -87,6 +88,7 @@ corporate:
   bull_growth_cap: 0.30
   bull_multiple_factor: 1.12
   bull_pe_cap: 30.0
+  minimum_bull_premium_to_base: 0.10
 
 financials:
   roe_floor: 0.04
@@ -138,9 +140,10 @@ policy_notes:
   - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
   - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
   - Sector classification is fail-closed. No unknown security silently defaults to CORPORATE.
-  - Visa is routed to CORPORATE because its economics are payment-network/technology-like rather than bank balance-sheet economics.
+  - Visa and Mastercard are routed to CORPORATE because their economics are payment-network/technology-like rather than bank balance-sheet economics. Both are structurally asset-light (a tiny book value per share relative to price), so the Financials P/B anchor is meaningless for them and produces a degenerate Bear case if misapplied.
   - Financials use normalized BVPS, ROE, observed market P/B and a ROE-implied fair P/B anchor; conventional corporate Debt/Equity is excluded from their stress model.
   - Financial Bull must be strictly above Base, subject to the same external plausibility cap.
+  - Corporate Bull must be strictly above Base, subject to the same external plausibility cap; for richly-valued names whose P/E is clipped well below the real multiple, the mechanical growth/multiple bump alone is not guaranteed to exceed a Base already pulled toward a high consensus median, so the same ordering floor used for Financials applies here too.
   - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
   - Bear is independent of analyst low; Bull remains plausibility-capped.

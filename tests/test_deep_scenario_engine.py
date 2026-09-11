@@ -3,7 +3,7 @@ from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
  'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}}},
- 'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE'},
+ 'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'base_pe_cap':25,'bull_multiple_factor':1.12,'bull_pe_cap':30,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
@@ -83,3 +83,29 @@ def test_blocked_etf_cannot_resurrect_as_g4_eligible():
 def test_ready_etf_requires_complete_ordered_scenarios_and_probabilities():
  row={'cedear_ticker':'XLF','valuation_engine_type':'ETF','valuation_status':'VALUATION_READY','bull_target_price':120,'base_target_price':105,'bear_target_price':85,'bull_probability':.25,'base_probability':.5,'bear_probability':.25}
  out,m=validate_scenarios(pd.DataFrame([row]),POLICY); assert out.iloc[0]['scenario_validated']; assert m['scenario_validated_count']==1
+
+def test_richly_valued_growth_corporate_gets_bull_ordering_floor_like_financials():
+ # Real NVDA-shaped inputs: P/E (43.8) is clipped down to base_pe_cap (25) for
+ # both the Base and Bull fundamental legs, but only Base is pulled up toward
+ # the (much higher) consensus median. Without a floor, the purely mechanical
+ # Bull ends up below that consensus-pulled Base.
+ row=_row('NVDA',223.67,540.75,306.0,181.8,4.8979,43.8295,204.08,.7,.0538,sector='Technology')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'CORPORATE_BULL_ORDERING_FLOOR_APPLIED' in r['scenario_review_flags']
+ assert abs(r['bull_target_price']-r['base_target_price']*1.10)<1e-6
+
+def test_mastercard_routes_to_corporate_like_visa_not_bank_balance_sheet_model():
+ # Real MA-shaped inputs. Mastercard's Comafi/provider sector metadata says
+ # "Financial", but -- exactly like Visa -- it is a payment network, not a
+ # bank: book value per share ($8.65) is tiny relative to price ($567.5,
+ # ~66x P/B), so the Financials P/B anchor is meaningless for it and produces
+ # a degenerate ~96%-collapse Bear case if the sector override is missing.
+ row=_row('MA',567.5,777.0,678.3,552.7932,16.521,33.1055,17.34,.7,2.4557,sector='Financial',
+          fundamental_book_value_per_share=8.6544,fundamental_price_to_book=66.2593,fundamental_roe=193.46)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='CORPORATE'; assert r['scenario_sector_source']=='POLICY_OVERRIDE'
+ assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ # A P/B-driven collapse would put Bear near current*0.04 (~$24); the
+ # payment-network model should keep it in a materially saner range.
+ assert r['bear_target_price']>567.5*0.30

@@ -42,7 +42,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          m=json.load(open('data/canonical/g4_v22_portfolio/g4_v22_portfolio_stress_manifest.json')); assert m['methodology_version']=='G4-2.2-SHADOW'; assert m['portfolio_stress_methodology']=='PORTFOLIO-STRESS-1.0'; assert m['shadow_only'] and not m['production_decision_authority'] and m['production_chain_unchanged']; assert m['correlation_aware_stress_is_diagnostic_only']; assert m['portfolio_gross_stress_budget_ok']; print('G4_2_2_PORTFOLIO_STRESS_AUDIT=PASS')
+          m=json.load(open('data/canonical/g4_v22_portfolio/g4_v22_portfolio_stress_manifest.json')); assert m['methodology_version']=='G4-2.2-SHADOW'; assert m['portfolio_stress_methodology']=='PORTFOLIO-STRESS-1.1-ECONOMIC-FIRST'; assert m['shadow_only'] and not m['production_decision_authority'] and m['production_chain_unchanged']; assert m['correlation_aware_stress_is_diagnostic_only']; assert m['portfolio_gross_stress_budget_ok']; print('G4_2_2_PORTFOLIO_STRESS_AUDIT=PASS')
           PY
       - uses: actions/upload-artifact@v4
         with: {name: g4-v22-portfolio-stress-audit, path: data/canonical/g4_v22_portfolio/, if-no-files-found: error, retention-days: 90}
