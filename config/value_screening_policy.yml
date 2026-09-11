@@ -1,0 +1,40 @@
+methodology_version: VALUE-SCREEN-1.0-SHADOW
+
+# SHADOW ONLY. This policy feeds src/orchestration/build_value_research_shadow.py,
+# an isolated audit workflow. It does not feed production Research, Valuation,
+# G4, Risk or Committee. See the Fase 1 plan: value-first Top-30 redesign.
+
+components:
+  consensus_upside_to_base:
+    higher_is_better: true
+    weight: 0.30
+  fundamental_pe_normalized:
+    higher_is_better: false
+    weight: 0.20
+  fundamental_eps_growth_3y:
+    higher_is_better: true
+    weight: 0.20
+  fundamental_roe:
+    higher_is_better: true
+    weight: 0.10
+  fundamental_debt_to_equity:
+    higher_is_better: false
+    weight: 0.10
+  analyst_count:
+    higher_is_better: true
+    weight: 0.10
+
+max_uncertainty_penalty: 20.0
+min_value_data_quality: 50.0
+
+ranking:
+  top_n: 30
+  etf_slots: 6
+  min_timing_gate_score: 45.0
+  min_technical_data_quality: 60.0
+
+notes:
+  - Equities are ranked by value_score (fundamentals from the broad-universe Finnhub consensus scenario); the existing technical screening_score is used only as a binary entry-timing gate, never as the ranking key, for equities.
+  - ETFs/non-equity keep the existing technical-only ranking track unchanged and do not compete against equities for value.
+  - Missing fundamental data receives a neutral (50th percentile) contribution plus an explicit uncertainty penalty, the same policy already used by the technical screening engine, instead of being excluded or zero-filled.
+  - A ticker with valuation_status=BLOCKED_BY_DATA (e.g. fewer than the minimum analyst count) will naturally have every fundamental component missing and therefore a low value_data_quality_score, without any special-cased handling.
