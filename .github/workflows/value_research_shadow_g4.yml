@@ -1,0 +1,110 @@
+name: Value-First Research Shadow G4
+
+# SHADOW ONLY. Takes the value-first shadow Top-30 produced by
+# value_research_shadow.yml and runs it through the exact, unmodified
+# production Deep Scenario Review + G4 Cash Hurdle
+# (src.orchestration.build_g4_cash_hurdle) to see whether a fundamentals-first
+# selection produces candidates that actually pass G4, versus the currently
+# certified 0/30 result on the technical-only production Top-30.
+#
+# Does NOT feed production Research, Valuation, Risk or Committee, and does
+# NOT dispatch any of those workflows. G4 economics (cash hurdle, penalties,
+# thresholds) are completely unchanged: only the candidate set fed into them
+# is different.
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch/commit carrying the value-screening code (this launcher itself must live on main to be dispatchable)"
+        required: true
+        default: "claude/modest-maxwell-xnwsfi"
+        type: string
+      shadow_run_id:
+        description: "value_research_shadow.yml run id to source the shadow Top-30 and its broad-universe valuation from (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+      universe_run_id:
+        description: "build_universe.yml run id (leave blank to use the latest successful run on this ref)"
+        required: false
+        type: string
+      local_market_run_id:
+        description: "cedear_local_market.yml run id (leave blank to use the latest successful run)"
+        required: false
+        type: string
+      portfolio_run_id:
+        description: "portfolio_state.yml run id (leave blank to use the latest successful run)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  value-research-shadow-g4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "${{ inputs.code_ref }}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Regression tests
+        run: pytest -q tests/test_prepare_value_shadow_g4_inputs.py tests/test_g4_cash_hurdle.py tests/test_deep_scenario_engine.py
+      - name: Resolve upstream runs
+        run: |
+          S="${{ inputs.shadow_run_id }}"
+          if [ -z "$S" ]; then S=$(gh run list --workflow value_research_shadow.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$S" && test "$S" != null
+          U="${{ inputs.universe_run_id }}"
+          if [ -z "$U" ]; then U=$(gh run list --workflow build_universe.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$U" && test "$U" != null
+          L="${{ inputs.local_market_run_id }}"
+          if [ -z "$L" ]; then L=$(gh run list --workflow cedear_local_market.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$L" && test "$L" != null
+          P="${{ inputs.portfolio_run_id }}"
+          if [ -z "$P" ]; then P=$(gh run list --workflow portfolio_state.yml --branch "${GITHUB_REF_NAME}" --status success --limit 1 --json databaseId --jq '.[0].databaseId'); fi
+          test -n "$P" && test "$P" != null
+          echo "SHADOW_RUN_ID=$S" >> "$GITHUB_ENV"
+          echo "UNIVERSE_RUN_ID=$U" >> "$GITHUB_ENV"
+          echo "LOCAL_RUN_ID=$L" >> "$GITHUB_ENV"
+          echo "PORTFOLIO_RUN_ID=$P" >> "$GITHUB_ENV"
+          mkdir -p data/upstream_shadow data/upstream_universe data/upstream_local data/upstream_portfolio
+          gh run download "$S" --name value-research-shadow --dir data/upstream_shadow
+          gh run download "$U" --name canonical-universe --dir data/upstream_universe
+          gh run download "$L" --name cedear-local-market-layer --dir data/upstream_local
+          gh run download "$P" --name portfolio-state-engine --dir data/upstream_portfolio
+      - name: Slice broad valuation + local market to the shadow Top-30
+        run: |
+          python -m src.orchestration.prepare_value_shadow_g4_inputs \
+            --shadow-ranking data/upstream_shadow/value_research_shadow/value_research_shadow.parquet \
+            --valuation data/upstream_shadow/value_research_shadow_valuation/valuation_scenarios.parquet \
+            --universe data/upstream_universe/cedear_universe_master.parquet \
+            --local-market data/upstream_local/cedear_local_market.parquet \
+            --output-dir data/canonical/value_research_shadow_g4_inputs
+      - name: Run unmodified production G4 Cash Hurdle against the shadow Top-30
+        run: |
+          python -m src.orchestration.build_g4_cash_hurdle \
+            --local-market data/canonical/value_research_shadow_g4_inputs/local_market_shadow30.parquet \
+            --valuation-inputs data/canonical/value_research_shadow_g4_inputs/valuation_inputs_shadow30.parquet \
+            --portfolio-fit data/upstream_portfolio/portfolio_fit_quantitative.parquet \
+            --positions data/upstream_portfolio/portfolio_positions.parquet \
+            --policy config/g4_policy.yml \
+            --scenario-policy config/scenario_review_policy.yml \
+            --output-dir data/canonical/value_research_shadow_g4 \
+            --brokerage-rate 0.006
+      - uses: actions/upload-artifact@v4
+        with:
+          name: value-research-shadow-g4
+          path: |
+            data/canonical/value_research_shadow_g4_inputs/
+            data/canonical/value_research_shadow_g4/
+          if-no-files-found: error
+          retention-days: 90
