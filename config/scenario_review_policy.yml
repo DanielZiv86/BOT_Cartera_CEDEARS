@@ -116,6 +116,7 @@ financials:
   bull_pb_factor: 1.20
   bull_pb_cap: 5.00
   minimum_bull_premium_to_base: 0.10
+  consensus_bear_blend: 0.20
 
 energy:
   base_pe_floor: 5.0
@@ -127,6 +128,7 @@ energy:
   bull_cycle_factor: 1.28
   dividend_credit: 0.50
   minimum_bull_premium_to_base: 0.10
+  consensus_bear_blend: 0.20
 
 consensus:
   dispersion_review_threshold: 0.75
@@ -171,6 +173,6 @@ policy_notes:
   - Corporate Bull must be strictly above Base, subject to the same external plausibility cap; for richly-valued names whose P/E is clipped well below the real multiple, the mechanical growth/multiple bump alone is not guaranteed to exceed a Base already pulled toward a high consensus median, so the same ordering floor used for Financials applies here too.
   - Energy uses normalized earnings plus FCF evidence, cycle stress and dividend support.
   - Analyst consensus is corroborating evidence, never the sole Bear/Base/Bull engine.
-  - Corporate Bear blends toward the winsorized analyst low (consensus_bear_blend); Financials and Energy Bear remain mechanical only. High and low consensus targets are both winsorized against a single outlier analyst before any of this (median-distance floor/cap and absolute-distance-from-current floor/cap), and dispersion/probability weighting is computed from the winsorized values, not the raw ones.
+  - All three sector archetypes blend their mechanical Bear case toward the winsorized analyst low (consensus_bear_blend), the same way each Base already blends toward the median: a purely mechanical compression never heard what analysts' own downside view actually says. High and low consensus targets are both winsorized against a single outlier analyst before any of this (median-distance floor/cap and absolute-distance-from-current floor/cap), and dispersion/probability weighting is computed from the winsorized values, not the raw ones.
   - Missing material evidence fails closed; no fallback fabricates a scenario.
   - Expected return is calculated only after scenario review.

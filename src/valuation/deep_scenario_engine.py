@@ -156,21 +156,35 @@ def _corporate_targets(row,current,median,low,bull_cap,policy):
     if bull>raw_bull:flags.append('CORPORATE_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
 
-def _financial_targets(row,current,median,bull_cap,policy):
+def _financial_targets(row,current,median,low,bull_cap,policy):
     c=policy.get('financials',{}) or {}; bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); roe=_rate(_first_num(row,'fundamental_roe','roe')); flags=['DEBT_EQUITY_NOT_USED_FOR_FINANCIALS']
     if bv is None or bv<=0 or roe is None:raise ValueError('FINANCIAL_FUNDAMENTALS_INCOMPLETE')
     observed_pb=current/bv; r=_clip(roe,float(c.get('roe_floor',.04)),float(c.get('roe_cap',.22))); fair_pb=_clip(float(c.get('base_pb_anchor',1))+float(c.get('roe_pb_sensitivity',3))*(r-float(c.get('cost_of_equity_anchor',.10))),float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.0)))
     ow=float(c.get('observed_pb_weight',.65)); fw=float(c.get('fair_pb_weight',1-ow)); denom=ow+fw
     if denom<=0:raise ValueError('FINANCIAL_PB_WEIGHTS_INVALID')
     basepb=_clip((ow*observed_pb+fw*fair_pb)/denom,float(c.get('base_pb_floor',.45)),float(c.get('base_pb_cap',4.0))); flags.append('FINANCIAL_OBSERVED_PB_ANCHORED')
-    fundamental_base=bv*basepb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*fundamental_base+blend*median; bear=bv*max(float(c.get('bear_pb_floor',.35)),basepb*float(c.get('bear_pb_factor',.72))); raw_bull=bv*min(float(c.get('bull_pb_cap',5.0)),basepb*float(c.get('bull_pb_factor',1.2))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap)
+    fundamental_base=bv*basepb; blend=float(c.get('consensus_base_blend',.2)); base=(1-blend)*fundamental_base+blend*median
+    # Same reasoning as CORPORATE: a pure P/B mechanical compression never
+    # hears what analysts' own bear case actually says. Blend it toward the
+    # real (winsorized) consensus low the same way base blends toward the
+    # median.
+    raw_bear=bv*max(float(c.get('bear_pb_floor',.35)),basepb*float(c.get('bear_pb_factor',.72))); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    raw_bull=bv*min(float(c.get('bull_pb_cap',5.0)),basepb*float(c.get('bull_pb_factor',1.2))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap)
+    if bear!=raw_bear:flags.append('FINANCIAL_BEAR_CONSENSUS_BLEND_APPLIED')
     if bull>raw_bull:flags.append('FINANCIAL_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
 
-def _energy_targets(row,current,median,bull_cap,policy):
+def _energy_targets(row,current,median,low,bull_cap,policy):
     c=policy.get('energy',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); fcf=_rate(_first_num(row,'fundamental_fcf_yield','fcf_yield')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
     if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('ENERGY_FUNDAMENTALS_INCOMPLETE')
-    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median; bear=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); raw_bull=bf*float(c.get('bull_cycle_factor',1.28))+current*div; min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=['ENERGY_CYCLE_NORMALIZATION_APPLIED']
+    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median
+    # Same reasoning as CORPORATE/FINANCIALS: a pure cycle-multiple bear case
+    # never hears what analysts' own bear case actually says. Blend it toward
+    # the real (winsorized) consensus low the same way base blends toward the
+    # median.
+    raw_bear=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    raw_bull=bf*float(c.get('bull_cycle_factor',1.28))+current*div; min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=['ENERGY_CYCLE_NORMALIZATION_APPLIED']
+    if bear!=raw_bear:flags.append('ENERGY_BEAR_CONSENSUS_BLEND_APPLIED')
     if bull>raw_bull:flags.append('ENERGY_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
 
@@ -187,8 +201,8 @@ def _equity_review(row,policy):
     try:
         scenario_row=_scenario_unit_row(row,meta); factor=_num(scenario_row.get('scenario_economic_unit_factor')) or 1.0
         if factor!=1.0:flags.append('SCENARIO_FUNDAMENTALS_NORMALIZED_TO_TRADED_SECURITY')
-        if sector=='FINANCIALS':bear,base,bull,mf=_financial_targets(scenario_row,current,median,bcap,policy)
-        elif sector=='ENERGY':bear,base,bull,mf=_energy_targets(scenario_row,current,median,bcap,policy)
+        if sector=='FINANCIALS':bear,base,bull,mf=_financial_targets(scenario_row,current,median,low,bcap,policy)
+        elif sector=='ENERGY':bear,base,bull,mf=_energy_targets(scenario_row,current,median,low,bcap,policy)
         else:bear,base,bull,mf=_corporate_targets(scenario_row,current,median,low,bcap,policy)
         flags.extend(mf)
     except ValueError as exc:blockers.append(str(exc)); bear=base=bull=None
