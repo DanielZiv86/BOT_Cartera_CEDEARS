@@ -20,7 +20,18 @@ def _first_num(row:pd.Series,*names:str)->float|None:
     return None
 
 def _dynamic_probabilities(confidence:float,dispersion:float,policy:dict)->tuple[float,float,float]:
-    p=policy.get('probabilities',{}) or {}; base=float(p.get('base_probability',.50)); lo=float(p.get('bull_min',.15)); hi=float(p.get('bull_max',.27)); penalty=min(max(dispersion-float(p.get('dispersion_penalty_start',.50)),0.),1.)*float(p.get('dispersion_bull_penalty_max',.07)); bull=_clip(lo+(hi-lo)*confidence-penalty,.10,.30); return bull,base,1.-base-bull
+    # bull and bear are already a zero-sum pair by construction (base is
+    # fixed, so bear = 1 - base - bull): confidence already pulls weight
+    # away from Bear and into Bull, symmetrically, with no separate lever
+    # needed. What actually constrained this was too narrow a bull_min/
+    # bull_max band -- a well-covered, high-confidence name could still only
+    # reach 27% Bull (73% Base+Bear), leaving Bear structurally around 23%
+    # even at maximum confidence. Widened via policy (bull_min/bull_max)
+    # rather than the range itself; bull_floor/bull_ceiling remain as an
+    # absolute safety rail, now policy-configurable instead of hardcoded, so
+    # they can be set wide enough to not silently re-narrow what bull_min/
+    # bull_max were just widened to allow.
+    p=policy.get('probabilities',{}) or {}; base=float(p.get('base_probability',.50)); lo=float(p.get('bull_min',.12)); hi=float(p.get('bull_max',.32)); penalty=min(max(dispersion-float(p.get('dispersion_penalty_start',.50)),0.),1.)*float(p.get('dispersion_bull_penalty_max',.07)); bull=_clip(lo+(hi-lo)*confidence-penalty,float(p.get('bull_floor',.08)),float(p.get('bull_ceiling',.35))); return bull,base,1.-base-bull
 
 def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     ticker=str(row.get('underlying_ticker') or row.get('cedear_ticker') or '').upper(); overrides=policy.get('sector_overrides',{}) or {}

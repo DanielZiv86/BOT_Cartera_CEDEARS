@@ -135,10 +135,22 @@ consensus:
 plausibility:
   max_standard_bull_upside: 0.60
   max_standard_bear_downside: 0.40
+# bull and bear are already a zero-sum pair (base_probability is fixed, so
+# bear = 1 - base - bull): confidence already shifts weight away from Bear
+# and into Bull symmetrically, with no separate mechanism needed for that.
+# What constrained this was too narrow a bull_min/bull_max band -- even a
+# well-covered, high-confidence name topped out at 27% Bull, leaving Bear
+# structurally around 23% no matter how good the coverage. Widened to
+# 12%-32% so confidence can move meaningfully more weight for well-covered
+# names; bull_floor/bull_ceiling are a separate absolute safety rail (not
+# meant to bind under normal inputs), set wide enough not to silently
+# re-narrow what bull_min/bull_max were just widened to allow.
 probabilities:
   base_probability: 0.50
-  bull_min: 0.15
-  bull_max: 0.27
+  bull_min: 0.12
+  bull_max: 0.32
+  bull_floor: 0.08
+  bull_ceiling: 0.35
   dispersion_penalty_start: 0.50
   dispersion_bull_penalty_max: 0.07
 
