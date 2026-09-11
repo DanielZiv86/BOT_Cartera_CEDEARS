@@ -79,7 +79,8 @@ jobs:
           assert l['universe_run_id']==u,(l,u); assert l['research_run_id']==r,(l,r); assert l['valuation_run_id']==v,(l,v); assert l['g4_run_id']==g,(l,g); assert l['decisional_risk_run_id']==d,(l,d); assert l['committee_run_id']==c,(l,c); assert l.get('e2e_ref')==ref,(l,ref)
           n=int(l['canonical_eligible_universe_count']); assert 0<n<304,("V2.1 geography-filtered denominator expected below prior 304",l)
           assert l['decisional_risk_status']=='PASS',l; assert l['decision_persisted'] is True,l; assert dec['fabricated_trade_count']==0,dec; assert shadow['status'] in ('NO_ACTION_PERSISTED','PENDING_EXECUTION_GATE'),shadow
-          print(json.dumps({'AUTONOMOUS_E2E_V2_1':'PASS','same_ref':ref,'geography_filtered_eligible_count':n,'lineage':l,'decision':dec['decision']},indent=2))
+          gt=dec.get('goal_tracking'); assert gt is not None,dec; assert gt.get('goal_status') in ('COMPUTABLE','GOAL_ALREADY_MET','HORIZON_ELAPSED'),gt
+          print(json.dumps({'AUTONOMOUS_E2E_V2_1':'PASS','same_ref':ref,'geography_filtered_eligible_count':n,'lineage':l,'decision':dec['decision'],'goal_status':gt.get('goal_status')},indent=2))
           PY
       - name: Persist autonomous certification evidence
         uses: actions/upload-artifact@v4

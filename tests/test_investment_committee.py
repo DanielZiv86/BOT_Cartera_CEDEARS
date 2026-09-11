@@ -10,6 +10,10 @@ def _write_json(path, payload):
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_yaml(path, text):
+    path.write_text(text, encoding="utf-8")
+
+
 def _lineage(**overrides):
     base = {
         "e2e_run_id": "E2E-1", "universe_run_id": 1, "research_run_id": 2, "valuation_run_id": 3,
@@ -17,6 +21,21 @@ def _lineage(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def _setup_goal_inputs(tmp_path, *, nav_total_usd=50000.0, target_additional_usd=1000.0):
+    portfolio_dir = tmp_path / "portfolio_state"; portfolio_dir.mkdir()
+    _write_json(portfolio_dir / "portfolio_state_manifest.json", {
+        "portfolio_state_validation": {"nav_total_usd": nav_total_usd},
+    })
+    goal_path = tmp_path / "financial_goal.yml"
+    _write_yaml(goal_path, (
+        "goal:\n"
+        f"  target_additional_usd: {target_additional_usd}\n"
+        "  set_as_of: \"2024-01-01\"\n"
+        "  horizon_months: 24\n"
+    ))
+    return portfolio_dir / "portfolio_state_manifest.json", goal_path
 
 
 def _setup_common(tmp_path, *, g4_manifest_overrides, g4_rows):
@@ -56,10 +75,13 @@ def test_no_pass_candidates_keeps_new_trades_empty_and_status_no_action(tmp_path
         g4_manifest_overrides={"pass_count": 0, "fail_count": 30, "deployment_decision": "NO_NEW_DEPLOYMENT"},
         g4_rows=[_g4_row(f"T{i}") for i in range(30)],
     )
+    manifest_path, goal_path = _setup_goal_inputs(tmp_path)
     monkeypatch.setattr("sys.argv", [
         "build_investment_committee",
         "--g4-dir", str(g4_dir), "--risk-dir", str(risk_dir),
         "--output-dir", str(out_dir), "--committee-run-id", "999",
+        "--portfolio-state-manifest", str(manifest_path), "--financial-goal", str(goal_path),
+        "--as-of-date", "2024-01-01",
     ])
     main()
     decision = json.loads((out_dir / "committee_decision.json").read_text())
@@ -69,6 +91,13 @@ def test_no_pass_candidates_keeps_new_trades_empty_and_status_no_action(tmp_path
     assert decision["allocation_metrics"] is None
     assert shadow["status"] == "NO_ACTION_PERSISTED"
     assert shadow["order_count"] == 0
+
+    goal = decision["goal_tracking"]
+    assert goal["goal_status"] == "COMPUTABLE"
+    assert goal["goal_current_nav_usd"] == 50000.0
+    assert goal["goal_target_wealth_usd"] == 51000.0
+    assert goal["goal_new_deployment_weighted_expected_return"] is None
+    assert goal["goal_pace_status"] == "NO_NEW_DEPLOYMENT_THIS_CYCLE"
 
 
 def test_pass_candidates_populate_sized_trades_and_pending_execution_status(tmp_path, monkeypatch):
@@ -80,10 +109,13 @@ def test_pass_candidates_populate_sized_trades_and_pending_execution_status(tmp_
         g4_manifest_overrides={"pass_count": 2, "fail_count": 28, "deployment_decision": "ALLOW_NEW_DEPLOYMENT"},
         g4_rows=rows,
     )
+    manifest_path, goal_path = _setup_goal_inputs(tmp_path)
     monkeypatch.setattr("sys.argv", [
         "build_investment_committee",
         "--g4-dir", str(g4_dir), "--risk-dir", str(risk_dir),
         "--output-dir", str(out_dir), "--committee-run-id", "1000",
+        "--portfolio-state-manifest", str(manifest_path), "--financial-goal", str(goal_path),
+        "--as-of-date", "2024-01-01",
     ])
     main()
     decision = json.loads((out_dir / "committee_decision.json").read_text())
@@ -99,3 +131,13 @@ def test_pass_candidates_populate_sized_trades_and_pending_execution_status(tmp_
 
     assert shadow["status"] == "PENDING_EXECUTION_GATE"
     assert shadow["order_count"] == 2 == len(shadow["orders"])
+
+    goal = decision["goal_tracking"]
+    assert goal["goal_status"] == "COMPUTABLE"
+    # target_additional_usd=1000 on a 50000 NAV over 24 months is a required
+    # annual return under 1% -- both BEST (0.15) and SECOND (0.10) clear it
+    # by a wide margin regardless of how the allocator weights them.
+    assert goal["goal_required_annual_return"] < 0.02
+    assert goal["goal_new_deployment_weighted_expected_return"] is not None
+    assert goal["goal_new_deployment_weighted_expected_return"] > goal["goal_required_annual_return"]
+    assert goal["goal_pace_status"] == "NEW_DEPLOYMENT_MEETS_OR_EXCEEDS_PACE"

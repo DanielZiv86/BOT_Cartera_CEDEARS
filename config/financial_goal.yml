@@ -1,0 +1,15 @@
+methodology_version: GOALS-HURDLE-1.0
+
+# Personal financial fact, not a policy calibration: how much additional USD,
+# beyond the NAV already held, is needed and by when. Recomputed every run
+# against the live portfolio NAV and today's date via src/portfolio/goals.py
+# -- the required-return figure it produces is a PACE/MONITORING metric only.
+# It is never blended into any individual candidate's G4 PASS/FAIL gate: the
+# mandate is to maximize risk-adjusted return within the existing G4/
+# allocation risk budget every cycle (re-selecting the best available Top-30
+# weekly), not to force every candidate to individually clear this number.
+# Update the two goal fields directly when the actual objective changes.
+goal:
+  target_additional_usd: 20000
+  set_as_of: "2026-09-11"
+  horizon_months: 24
