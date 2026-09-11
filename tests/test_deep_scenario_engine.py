@@ -7,8 +7,8 @@ POLICY={
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
- 'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
- 'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10},
+ 'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
+ 'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
  'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50,'low_distance_from_median_floor':.50},'plausibility':{'max_standard_bull_upside':.60,'max_standard_bear_downside':.40},'probabilities':{'base_probability':.50,'bull_min':.12,'bull_max':.32,'bull_floor':.08,'bull_ceiling':.35,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
 
 def _row(ticker,current,high,median,low,eps,pe,growth,confidence=.60,de=.8,sector='Technology',**extra):
@@ -22,6 +22,17 @@ def test_jpm_routes_to_financials_and_orders_scenarios():
  out,_=validate_scenarios(pd.DataFrame([_row('JPM',354.71,450,378.42,250,16.95,20,.08,.7,4,sector='Financial Services',fundamental_book_value_per_share=134.4218,fundamental_price_to_book=2.4202,fundamental_roe=15.74)]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='FINANCIALS'; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']; assert r['scenario_validated']; assert r['base_target_price']>250; assert 'FINANCIAL_OBSERVED_PB_ANCHORED' in r['scenario_review_flags']
 
+def test_financials_bear_case_blends_toward_consensus_low_same_as_corporate():
+ # Same reasoning validated for CORPORATE: a pure P/B mechanical compression
+ # never hears what analysts' own bear case actually says.
+ out,_=validate_scenarios(pd.DataFrame([_row('JPM',354.71,450,378.42,250,16.95,20,.08,.7,4,sector='Financial Services',fundamental_book_value_per_share=134.4218,fundamental_price_to_book=2.4202,fundamental_roe=15.74)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ # basepb = clip((.65*observed_pb + .35*fair_pb)/1.0, .45, 4.0) with
+ # observed_pb=current/bv=2.6389, fair_pb=clip(1+3*(.1574-.10),.45,4.0)=1.1722
+ raw_mechanical_bear=134.4218*max(.35,2.125479140184107*.72)
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*250,rel=1e-4)
+ assert 'FINANCIAL_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
+
 def test_visa_routes_to_corporate_not_bank_balance_sheet_model():
  out,_=validate_scenarios(pd.DataFrame([_row('V',367.39,500,428.4,300,10.2024,34.24,.1337,.7,1,sector='Financial Services',fundamental_book_value_per_share=19.7892,fundamental_price_to_book=17.2671,fundamental_roe=52.91)]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='CORPORATE'; assert r['scenario_sector_source']=='POLICY_OVERRIDE'; assert r['scenario_validated']
@@ -29,6 +40,16 @@ def test_visa_routes_to_corporate_not_bank_balance_sheet_model():
 def test_cvx_routes_to_energy_from_official_sector():
  out,_=validate_scenarios(pd.DataFrame([_row('CVX',160,200,180,120,12,13,.05,.7,.3,sector='Energy',fundamental_fcf_yield=.08,fundamental_dividend_yield=.04)]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='ENERGY'; assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+
+def test_energy_bear_case_blends_toward_consensus_low_same_as_corporate():
+ # Same reasoning validated for CORPORATE/FINANCIALS: a pure cycle-multiple
+ # compression never hears what analysts' own bear case actually says.
+ out,_=validate_scenarios(pd.DataFrame([_row('CVX',160,200,180,120,12,13,.05,.7,.3,sector='Energy',fundamental_fcf_yield=.08,fundamental_dividend_yield=.04)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ peb=13; earn=12*peb; fcfb=160*1.0; bf=.65*earn+.35*fcfb
+ raw_mechanical_bear=bf*.72+160*.04*.5
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*120,rel=1e-4)
+ assert 'ENERGY_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
 
 def test_corporate_bear_case_blends_toward_consensus_low_instead_of_pure_mechanical_compression():
  # growth=.20 (the growth cap) gives a dynamic P/E cap of 15+1.5*20=45, well
