@@ -90,6 +90,7 @@ class EquityConnector:
             "totalDebt/totalEquityAnnual": 45.0,
             "netProfitMarginAnnual": 12.0,
             "currentRatioAnnual": 1.5,
+            "marketCapitalization": 500000.0,
         }}
     def retrieved_at(self):
         return "2026-09-05T00:00:00+00:00"
@@ -165,6 +166,7 @@ def test_equity_ready_when_consensus_is_fresh_and_fundamentals_are_attached():
     assert row["fundamental_eps_normalized"] == 8.0
     assert row["fundamental_pe_normalized"] == 12.5
     assert row["fundamental_eps_growth_3y"] == 7.0
+    assert row["fundamental_market_cap_usd"] == 500000.0 * 1_000_000.0
     assert connector.price_target_calls == ["AAA"]
     assert connector.recommendation_calls == []
     assert connector.financial_calls == ["AAA"]

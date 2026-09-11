@@ -89,6 +89,7 @@ corporate:
   bull_multiple_factor: 1.12
   bull_pe_cap: 30.0
   minimum_bull_premium_to_base: 0.10
+  consensus_bear_blend: 0.20
 
 financials:
   roe_floor: 0.04

@@ -1,11 +1,12 @@
 import pandas as pd
+import pytest
 from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
  'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
- 'corporate':{'consensus_base_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'base_pe_cap':25,'bull_multiple_factor':1.12,'bull_pe_cap':30,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
+ 'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'base_pe_cap':25,'bull_multiple_factor':1.12,'bull_pe_cap':30,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
  'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10},
  'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50},'plausibility':{'max_standard_bull_upside':.60},'probabilities':{'base_probability':.50,'bull_min':.15,'bull_max':.27,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
@@ -28,6 +29,21 @@ def test_visa_routes_to_corporate_not_bank_balance_sheet_model():
 def test_cvx_routes_to_energy_from_official_sector():
  out,_=validate_scenarios(pd.DataFrame([_row('CVX',160,200,180,120,12,13,.05,.7,.3,sector='Energy',fundamental_fcf_yield=.08,fundamental_dividend_yield=.04)]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='ENERGY'; assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+
+def test_corporate_bear_case_blends_toward_consensus_low_instead_of_pure_mechanical_compression():
+ # Mechanical EPS-x-PE compression alone would put the bear case at ~-36%
+ # (eps*0.82*19.5 = 63.96 vs current=100), far harsher than what analysts'
+ # own low target implies (85, i.e. -15%). Blending toward that real low
+ # pulls the bear case back from the mechanical extreme instead of ignoring
+ # the market's own downside view entirely -- a quality name shouldn't be
+ # penalized with a worse bear case than analysts themselves assign it.
+ out,_=validate_scenarios(pd.DataFrame([_row('QUAL',100,180,125,85,4,27,.20,.7,.3,sector='Technology')]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ raw_mechanical_bear=4*(1-.18)*19.5
+ assert r['bear_target_price']>raw_mechanical_bear
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*85)
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'CORPORATE_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
 
 def test_energy_bull_ordering_floor_applies_when_consensus_outruns_cycle_fundamentals():
  # eps/pe-cycle fundamentals alone put fair value far below a bullish

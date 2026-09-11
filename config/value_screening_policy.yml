@@ -7,22 +7,31 @@ methodology_version: VALUE-SCREEN-1.0-SHADOW
 components:
   consensus_upside_to_base:
     higher_is_better: true
-    weight: 0.30
+    weight: 0.25
+  fundamental_market_cap_usd:
+    higher_is_better: true
+    weight: 0.15
+  sector_tech_affinity:
+    higher_is_better: true
+    weight: 0.10
   fundamental_pe_normalized:
     higher_is_better: false
-    weight: 0.20
+    weight: 0.15
   fundamental_eps_growth_3y:
     higher_is_better: true
-    weight: 0.20
+    weight: 0.15
   fundamental_roe:
     higher_is_better: true
     weight: 0.10
   fundamental_debt_to_equity:
     higher_is_better: false
     weight: 0.10
-  analyst_count:
-    higher_is_better: true
-    weight: 0.10
+
+tech_sector_keywords:
+  - TECHNOLOGY
+  - SOFTWARE
+  - SEMICONDUCTOR
+  - INTERNET
 
 max_uncertainty_penalty: 20.0
 min_value_data_quality: 50.0
@@ -38,3 +47,4 @@ notes:
   - ETFs/non-equity keep the existing technical-only ranking track unchanged and do not compete against equities for value.
   - Missing fundamental data receives a neutral (50th percentile) contribution plus an explicit uncertainty penalty, the same policy already used by the technical screening engine, instead of being excluded or zero-filled.
   - A ticker with valuation_status=BLOCKED_BY_DATA (e.g. fewer than the minimum analyst count) will naturally have every fundamental component missing and therefore a low value_data_quality_score, without any special-cased handling.
+  - fundamental_market_cap_usd and sector_tech_affinity implement a preference for larger, more established technology names (megacap/tech quality tilt), per the investor's stated profile -- both are score tilts (percentile-ranked / 0-1 flag), never hard filters, consistent with every other component here. sector_tech_affinity reads the canonical universe's industry_sector_official field (Comafi-sourced, always present at the universe level even when Finnhub fundamentals are missing), not a Finnhub-sourced field.
