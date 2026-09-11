@@ -28,8 +28,8 @@ jobs:
         run: |
           set -euo pipefail
           dispatch_wait () {
-            WF="$1"; OUT="$2"; BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            gh workflow run "$WF" --ref "$E2E_REF"; ID=""
+            WF="$1"; OUT="$2"; shift 2; BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            gh workflow run "$WF" --ref "$E2E_REF" "$@"; ID=""
             for i in $(seq 1 30); do
               ID=$(gh run list --workflow "$WF" --event workflow_dispatch --branch "$E2E_REF" --limit 20 --json databaseId,createdAt --jq '[.[] | select(.createdAt >= "'"$BEFORE"'")][0].databaseId // empty')
               [ -n "$ID" ] && break; sleep 2
@@ -44,7 +44,7 @@ jobs:
           dispatch_wait portfolio_state.yml portfolio_run_id.txt
           dispatch_wait cedear_local_market.yml local_market_run_id.txt
           dispatch_wait weekly_screening.yml research_run_id.txt
-          dispatch_wait valuation_scenarios.yml valuation_run_id.txt
+          dispatch_wait valuation_scenarios.yml valuation_run_id.txt -f dispatch_g4=true
       - name: Wait for exact G4 -> Risk -> Committee handoffs
         run: |
           set -euo pipefail
