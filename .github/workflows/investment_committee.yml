@@ -110,8 +110,10 @@ jobs:
               assert s['order_count']==0,s
           elif c['decision']=='CANDIDATES_REQUIRE_EXECUTION_GATE':
               assert c['g4_pass_count']>0,c
-              assert s['order_count']==0,s
-              assert c['new_trades']==[],c
+              assert len(c.get('new_trades',[]))>0,c
+              assert s['order_count']==len(c['new_trades'])>0,s
+              assert c.get('allocation_metrics') is not None,c
+              assert c['allocation_metrics']['allocated_count']==len(c['new_trades']),c
           else:
               raise AssertionError(('UNKNOWN_COMMITTEE_DECISION',c))
           print(json.dumps({'FINAL_E2E':'PASS','decision':c['decision'],'rationale':c['rationale'],'canonical_eligible_universe_count':eligible,'scenario_validated_count':scenario_validated_count,'scenario_blocked_count':scenario_blocked_count,'scenario_methodology_version':l['scenario_methodology_version'],'g4_methodology_version':l['g4_methodology_version'],'lineage':l},indent=2))
