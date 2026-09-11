@@ -6,10 +6,23 @@ name: Value-First Research Shadow
 # compares it against the current production technical-only Research Top-30.
 # Does NOT feed production Research, Valuation, G4, Risk or Committee, and
 # does NOT dispatch any of those workflows.
+#
+# Runs weekly on schedule (see cron below) to build up a track record of
+# comparisons against production before the Fase 2 production cutover
+# decision (inverting Research/Valuation lineage) is made -- a single
+# snapshot isn't enough evidence for a change that size. Each scheduled run
+# auto-dispatches value_research_shadow_g4.yml (itself shadow-only) so a
+# full comparison is available every week without manual intervention;
+# results live in each run's GitHub Actions artifacts (90-day retention).
 
 on:
   workflow_dispatch:
     inputs:
+      dispatch_g4:
+        description: "Dispatch value_research_shadow_g4.yml after this run (leave false for an isolated shadow Research run); always dispatched on the weekly schedule"
+        required: false
+        default: false
+        type: boolean
       code_ref:
         description: "Branch/commit carrying the value-screening code (this launcher itself must live on main to be dispatchable; the implementation can stay on a feature branch until cutover)"
         required: true
@@ -31,10 +44,15 @@ on:
         description: "weekly_screening.yml run id, for the comparison baseline (leave blank to use the latest successful run on this ref)"
         required: false
         type: string
+  schedule:
+    # Weekly evidence-gathering run for the Fase 2 cutover decision: value-first
+    # shadow Research + shadow G4, compared against production every Friday
+    # after the weekday market-data feeds have refreshed. Fridays 22:00 UTC.
+    - cron: "0 22 * * 5"
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 jobs:
   value-research-shadow:
@@ -47,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: "${{ inputs.code_ref }}"
+          ref: "${{ inputs.code_ref || 'main' }}"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -91,3 +109,6 @@ jobs:
             data/canonical/value_research_shadow/
           if-no-files-found: error
           retention-days: 90
+      - name: Dispatch shadow G4 against this run's result
+        if: ${{ github.event_name == 'schedule' || inputs.dispatch_g4 == true }}
+        run: gh workflow run value_research_shadow_g4.yml --ref "${GITHUB_REF_NAME}" -f code_ref=main -f shadow_run_id="${GITHUB_RUN_ID}"
