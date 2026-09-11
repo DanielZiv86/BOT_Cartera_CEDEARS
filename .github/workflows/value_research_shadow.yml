@@ -10,6 +10,11 @@ name: Value-First Research Shadow
 on:
   workflow_dispatch:
     inputs:
+      code_ref:
+        description: "Branch/commit carrying the value-screening code (this launcher itself must live on main to be dispatchable; the implementation can stay on a feature branch until cutover)"
+        required: true
+        default: "claude/modest-maxwell-xnwsfi"
+        type: string
       universe_run_id:
         description: "build_universe.yml run id (leave blank to use the latest successful run on this ref)"
         required: false
@@ -41,6 +46,8 @@ jobs:
       FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: "${{ inputs.code_ref }}"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
