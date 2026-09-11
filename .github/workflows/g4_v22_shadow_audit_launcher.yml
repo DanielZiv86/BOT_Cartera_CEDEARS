@@ -1,0 +1,121 @@
+name: G4 V2.2 Shadow Stress Budget Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      g4_v21_run_id:
+        description: Exact successful certified G4-2.1 run id
+        required: true
+        default: "34525193005"
+        type: string
+      audit_ref:
+        description: Branch/ref containing G4-2.2 shadow implementation
+        required: true
+        default: "audit/scenario-v2-3-probabilistic-bear"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  g4-v22-shadow-audit:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact audit implementation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.audit_ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Regression tests
+        run: pytest -q tests/test_g4_v22_shadow.py tests/test_g4_cash_hurdle.py tests/test_deep_scenario_v23.py
+
+      - name: Download exact certified G4-2.1 artifact
+        run: |
+          R="${{ inputs.g4_v21_run_id }}"
+          M=$(gh run view "$R" --json workflowName,conclusion,headBranch,headSha)
+          echo "$M"
+          test "$(echo "$M" | python -c 'import json,sys; print(json.load(sys.stdin)["workflowName"])')" = "Build Valuation G4 Cash Hurdle"
+          test "$(echo "$M" | python -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')" = "success"
+          mkdir -p data/upstream_g4
+          gh run download "$R" --name valuation-g4-cash-hurdle --dir data/upstream_g4
+          python - <<'PY'
+          import json
+          m=json.load(open('data/upstream_g4/g4_manifest.json'))
+          l=json.load(open('data/upstream_g4/e2e_lineage.json'))
+          assert m['methodology_version']=='G4-2.1'
+          assert m['scenario_methodology_version']=='SCENARIO-2.3'
+          assert m['preservation_gate_scenario']=='STRESS'
+          assert l['g4_run_id']==int('${{ inputs.g4_v21_run_id }}')
+          print('CERTIFIED_G4_2_1_INPUT=PASS')
+          PY
+
+      - name: Build G4-2.2 shadow comparison
+        run: |
+          mkdir -p data/canonical/g4_v22_shadow
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          import yaml
+          from src.valuation.g4_v22_shadow import build_g4_v22_shadow
+
+          src=Path('data/upstream_g4')
+          preferred=['g4_cash_hurdle.parquet','g4_results.parquet','g4_candidates.parquet']
+          p=next((src/x for x in preferred if (src/x).exists()),None)
+          if p is None:
+              ps=list(src.glob('*.parquet'))
+              assert len(ps)==1,('G4_PARQUET_NOT_UNIQUE',ps)
+              p=ps[0]
+          df=pd.read_parquet(p)
+          policy=yaml.safe_load(open('config/g4_policy_v22_shadow.yml'))
+          out,metrics=build_g4_v22_shadow(df,policy)
+          outdir=Path('data/canonical/g4_v22_shadow')
+          out.to_parquet(outdir/'g4_v22_shadow_comparison.parquet',index=False)
+          out.to_csv(outdir/'g4_v22_shadow_comparison.csv',index=False)
+          metrics['source_g4_v21_run_id']=int('${{ inputs.g4_v21_run_id }}')
+          metrics['source_g4_v21_artifact']=p.name
+          metrics['audit_ref']='${{ inputs.audit_ref }}'
+          (outdir/'g4_v22_shadow_manifest.json').write_text(json.dumps(metrics,indent=2))
+          print(json.dumps(metrics,indent=2))
+          cols=['cedear_ticker','g4_v21_status','g4_v22_shadow_status','stress_return_net','position_stress_contribution_nav','stress_compatible_max_weight','risk_adjusted_er','net_benefit_vs_cash']
+          print(out[cols].to_string(index=False))
+          PY
+
+      - name: Certify shadow isolation
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          m=json.load(open('data/canonical/g4_v22_shadow/g4_v22_shadow_manifest.json'))
+          df=pd.read_parquet('data/canonical/g4_v22_shadow/g4_v22_shadow_comparison.parquet')
+          assert m['methodology_version']=='G4-2.2-SHADOW'
+          assert m['shadow_only'] is True
+          assert m['production_decision_authority'] is False
+          assert m['production_chain_unchanged'] is True
+          assert m['scenario_methodology_version']=='SCENARIO-2.3'
+          assert m['compare_against']=='G4-2.1'
+          assert len(df)==m['ticker_count']
+          assert df['g4_v22_shadow_only'].all()
+          print('G4_2_2_SHADOW_AUDIT_CONTRACT=PASS')
+          PY
+
+      - name: Upload G4-2.2 shadow audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: g4-v22-shadow-audit
+          path: data/canonical/g4_v22_shadow/
+          if-no-files-found: error
+          retention-days: 90
+
+# Launcher only. Deliberately no Risk, Committee, Shadow Book or order dispatch.
