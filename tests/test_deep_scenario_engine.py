@@ -6,10 +6,10 @@ POLICY={
  'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
- 'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'base_pe_cap':25,'bull_multiple_factor':1.12,'bull_pe_cap':30,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
+ 'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10},
  'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10},
- 'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50},'plausibility':{'max_standard_bull_upside':.60},'probabilities':{'base_probability':.50,'bull_min':.15,'bull_max':.27,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
+ 'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50,'low_distance_from_median_floor':.50},'plausibility':{'max_standard_bull_upside':.60,'max_standard_bear_downside':.40},'probabilities':{'base_probability':.50,'bull_min':.15,'bull_max':.27,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
 
 def _row(ticker,current,high,median,low,eps,pe,growth,confidence=.60,de=.8,sector='Technology',**extra):
  r={'cedear_ticker':ticker,'underlying_ticker':ticker,'valuation_engine_type':'EQUITY','valuation_method':'FINNHUB_ANALYST_CONSENSUS_SCREENING_V4','valuation_status':'VALUATION_READY','current_price':current,'bull_target_price':high,'base_target_price':median,'bear_target_price':low,'consensus_target_high':high,'consensus_target_median':median,'consensus_target_low':low,'fundamental_eps_normalized':eps,'fundamental_pe_normalized':pe,'fundamental_eps_growth_3y':growth,'fundamental_debt_to_equity':de,'valuation_confidence':confidence,'eps_unit':'UNDERLYING_SECURITY','target_price_unit':'UNDERLYING_SECURITY','industry_sector_official':sector,'issuer_country_normalized':'US','underlying_market_official':'NASDAQ GS'}; r.update(extra); return r
@@ -31,15 +31,17 @@ def test_cvx_routes_to_energy_from_official_sector():
  assert r['scenario_sector_model']=='ENERGY'; assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
 
 def test_corporate_bear_case_blends_toward_consensus_low_instead_of_pure_mechanical_compression():
- # Mechanical EPS-x-PE compression alone would put the bear case at ~-36%
- # (eps*0.82*19.5 = 63.96 vs current=100), far harsher than what analysts'
+ # growth=.20 (the growth cap) gives a dynamic P/E cap of 15+1.5*20=45, well
+ # above this name's actual P/E of 27, so pem is the real, unclipped 27 --
+ # mechanical EPS-x-PE compression alone would put the bear case at ~-31%
+ # (eps*0.82*21.06 = 69.08 vs current=100), still harsher than what analysts'
  # own low target implies (85, i.e. -15%). Blending toward that real low
  # pulls the bear case back from the mechanical extreme instead of ignoring
  # the market's own downside view entirely -- a quality name shouldn't be
  # penalized with a worse bear case than analysts themselves assign it.
  out,_=validate_scenarios(pd.DataFrame([_row('QUAL',100,180,125,85,4,27,.20,.7,.3,sector='Technology')]),POLICY); r=out.iloc[0]
  assert r['scenario_validated'], r['scenario_review_blockers']
- raw_mechanical_bear=4*(1-.18)*19.5
+ raw_mechanical_bear=4*(1-.18)*(27*.78)
  assert r['bear_target_price']>raw_mechanical_bear
  assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*85)
  assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
@@ -112,14 +114,34 @@ def test_ready_etf_requires_complete_ordered_scenarios_and_probabilities():
  row={'cedear_ticker':'XLF','valuation_engine_type':'ETF','valuation_status':'VALUATION_READY','bull_target_price':120,'base_target_price':105,'bear_target_price':85,'bull_probability':.25,'base_probability':.5,'bear_probability':.25}
  out,m=validate_scenarios(pd.DataFrame([row]),POLICY); assert out.iloc[0]['scenario_validated']; assert m['scenario_validated_count']==1
 
-def test_richly_valued_growth_corporate_gets_bull_ordering_floor_like_financials():
- # Real NVDA-shaped inputs: P/E (43.8) is clipped down to base_pe_cap (25) for
- # both the Base and Bull fundamental legs, but only Base is pulled up toward
- # the (much higher) consensus median. Without a floor, the purely mechanical
- # Bull ends up below that consensus-pulled Base.
+def test_growth_adjusted_pe_cap_lets_richly_valued_growth_corporate_price_on_its_own_multiple():
+ # Real NVDA-shaped inputs. growth=204% clips to the base_growth_cap (20%),
+ # which now also drives the P/E cap to 15+1.5*20=45 -- comfortably above
+ # NVDA's real ~43.8x multiple, so pem uses the real multiple instead of a
+ # flat 25x cap. The old flat cap collapsed pem for Base and Bull alike, so
+ # only the consensus-blended Base kept any real upside and Bull needed an
+ # artificial floor to stay above it; with a growth-appropriate cap, Bull
+ # exceeds Base on its own mechanical merits, without the floor firing.
  row=_row('NVDA',223.67,540.75,306.0,181.8,4.8979,43.8295,204.08,.7,.0538,sector='Technology')
  out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
  assert r['scenario_validated']; assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'CORPORATE_GROWTH_ADJUSTED_PE_CAP_APPLIED' in r['scenario_review_flags']
+ assert 'CORPORATE_BULL_ORDERING_FLOOR_APPLIED' not in r['scenario_review_flags']
+ # Bull upside vs current should now be a real, non-trivial number instead of
+ # collapsing to (or below) current price the way the flat-cap model did.
+ assert r['bull_target_price'] > r['current_price'] * 1.20
+
+def test_bull_ordering_floor_still_fires_for_low_growth_name_with_rich_consensus_median():
+ # A no-growth name gets the floor of the dynamic P/E cap (15x), well below
+ # its real trading multiple of 15x here being the ceiling itself -- pem
+ # stays clipped exactly like the old flat-cap model would, so the ordering
+ # floor mechanism itself (not just the NVDA-shaped case it used to be
+ # demonstrated with) still needs to exist and fire for names whose
+ # consensus median runs ahead of what the mechanical model alone supports.
+ row=_row('LOWG',100,155,155,80,4,15,.0,.7,.3,sector='Technology')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
  assert 'CORPORATE_BULL_ORDERING_FLOOR_APPLIED' in r['scenario_review_flags']
  assert abs(r['bull_target_price']-r['base_target_price']*1.10)<1e-6
 

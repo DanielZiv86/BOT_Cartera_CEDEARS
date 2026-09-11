@@ -91,16 +91,40 @@ def _scenario_unit_row(row:pd.Series,meta:dict)->pd.Series:
 def _consensus(row,current,policy):
     high=_first_num(row,'consensus_target_high','bull_target_price'); med=_first_num(row,'consensus_target_median','base_target_price'); low=_first_num(row,'consensus_target_low','bear_target_price'); flags=[]
     if any(x is None or x<=0 for x in (high,med,low)):return high,med,low,0.,flags,None
-    dispersion=(high-low)/current; c=policy.get('consensus',{}) or {}
+    c=policy.get('consensus',{}) or {}; plaus=policy.get('plausibility',{}) or {}
+    # High and low are winsorized symmetrically: a single most-bullish or
+    # most-bearish analyst in the sample shouldn't be able to single-handedly
+    # set the Bull/Bear anchor or, via dispersion below, the bull/bear
+    # probability split. Both a distance-from-median floor/cap and an
+    # absolute distance-from-current floor/cap apply, matching each other's
+    # mechanics exactly.
+    bull_cap_abs=current*(1.+float(plaus.get('max_standard_bull_upside',.60)))
+    bull_cap_med=med+float(c.get('high_distance_from_median_cap',.50))*current
+    wh=min(high,bull_cap_med,bull_cap_abs)
+    if wh<high:flags.append('CONSENSUS_HIGH_WINSORIZED_FOR_PLAUSIBILITY')
+    bear_floor_abs=current*(1.-float(plaus.get('max_standard_bear_downside',.40)))
+    bear_floor_med=med-float(c.get('low_distance_from_median_floor',.50))*current
+    wl=max(low,bear_floor_med,bear_floor_abs)
+    if wl>low:flags.append('CONSENSUS_LOW_WINSORIZED_FOR_PLAUSIBILITY')
+    dispersion=(wh-wl)/current
     if dispersion>float(c.get('dispersion_review_threshold',.75)):flags.append('CONSENSUS_HIGH_LOW_DISPERSION')
-    cap=current*(1.+float((policy.get('plausibility',{}) or {}).get('max_standard_bull_upside',.60))); wh=min(high,med+float(c.get('high_distance_from_median_cap',.50))*current)
-    if high>cap:flags.append('CONSENSUS_HIGH_WINSORIZED_FOR_PLAUSIBILITY')
-    return high,med,low,dispersion,flags,min(wh,cap)
+    return high,med,wl,dispersion,flags,wh
 
 def _corporate_targets(row,current,median,low,bull_cap,policy):
     c=policy.get('corporate',policy.get('equity',{})) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y'))
     if eps is None or eps<=0 or pe is None or pe<=0 or growth is None:raise ValueError('CORPORATE_FUNDAMENTALS_INCOMPLETE')
-    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20))); pem=_clip(pe,float(c.get('base_pe_floor',6)),float(c.get('base_pe_cap',25))); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
+    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20)))
+    # A flat P/E cap treats a no-growth value name and a 20%+ grower
+    # identically, which structurally understates fair value (and Bull
+    # upside) for exactly the megacap/quality-growth names this pipeline is
+    # now tilted toward. The cap instead scales with the same (already
+    # conservatively clipped) growth rate used for the EPS build-up itself --
+    # roughly PEG-anchored -- so a genuine grower earns a richer multiple
+    # ceiling than a mature/no-growth name, instead of both being flattened
+    # to the same number.
+    pe_cap_base=float(c.get('pe_cap_base',15)); pe_cap_growth_sensitivity=float(c.get('pe_cap_growth_sensitivity',1.5)); pe_cap_ceiling=float(c.get('pe_cap_ceiling',55))
+    dynamic_pe_cap=_clip(pe_cap_base+pe_cap_growth_sensitivity*max(g,0.0)*100.0,pe_cap_base,pe_cap_ceiling)
+    pem=_clip(pe,float(c.get('base_pe_floor',6)),dynamic_pe_cap); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
     de=_num(row.get('fundamental_debt_to_equity')); extra=0 if de is None else _clip(max(de-float(c.get('debt_equity_stress_start',.75)),0)*float(c.get('debt_equity_stress_slope',.08)),0,float(c.get('max_leverage_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.18))+extra,float(c.get('bear_eps_compression',.18)),float(c.get('bear_eps_compression_cap',.35)))
     # A pure EPS-x-PE compression bear case treats every CORPORATE name
     # identically regardless of how resilient the business actually is --
@@ -112,7 +136,11 @@ def _corporate_targets(row,current,median,low,bull_cap,policy):
     # manufacturing a worse bear case than the market's own low estimate.
     raw_bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',5)),pem*float(c.get('bear_multiple_factor',.78))); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
     bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30)))
-    raw_bull=eps*(1+bg)*min(float(c.get('bull_pe_cap',30)),pem*float(c.get('bull_multiple_factor',1.12))); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=[]
+    # No separate bull_pe_cap: pem is already growth-adjusted above, and the
+    # consensus-derived bull_cap (winsorized in _consensus) remains the final
+    # plausibility ceiling on the resulting price, same as before.
+    raw_bull=eps*(1+bg)*pem*float(c.get('bull_multiple_factor',1.12)); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=[]
+    if dynamic_pe_cap>pe_cap_base:flags.append('CORPORATE_GROWTH_ADJUSTED_PE_CAP_APPLIED')
     if bear!=raw_bear:flags.append('CORPORATE_BEAR_CONSENSUS_BLEND_APPLIED')
     if bull>raw_bull:flags.append('CORPORATE_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
