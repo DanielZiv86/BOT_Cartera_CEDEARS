@@ -4,7 +4,6 @@ return_currency: USD_ECONOMIC_RETURN
 shadow_only: true
 production_decision_authority: false
 
-# Economics intentionally identical to G4-2.1.
 cash_hurdle:
   cash_return_assumption: 0.00
   minimum_excess_return_over_cash: 0.05
@@ -17,22 +16,25 @@ dynamic_equity_margin:
   downside_buffer_max: 0.000
 
 risk:
-  # Legacy G4-2.1 threshold is retained only for comparison; it is NOT the
-  # G4-2.2 shadow preservation decision rule.
   legacy_max_security_stress_downside: -0.15
   candidate_test_weight_nav: 0.05
   soft_single_name_weight: 0.12
   warning_single_name_weight: 0.15
   max_single_name_weight: 0.20
   correlation_warning: 0.75
-
-  # G4-2.2 shadow preservation architecture.
-  # Position stress contribution = proposed_weight * abs(stress_return_net).
-  # A 2% NAV loss budget is the initial audited calibration, not production.
   position_stress_budget_nav: 0.02
-  # Portfolio aggregate is reported/audited in shadow mode. No production
-  # threshold is activated until correlation-aware portfolio stress is certified.
+
+  # Second-level preservation audit. These are shadow calibrations only.
+  portfolio_stress_budget_nav: 0.10
   portfolio_stress_budget_mode: AUDIT_ONLY
+  portfolio_target_invested_weight: 0.50
+  portfolio_max_positions: 10
+  portfolio_min_position_weight: 0.02
+  portfolio_max_candidate_weight: 0.05
+  correlation_lookback_days: 252
+  correlation_floor: 0.00
+  correlation_missing_behavior: FAIL_CLOSED
+  concentration_hhi_warning: 0.15
 
 penalties:
   uncertainty_penalty_max: 0.10
@@ -57,14 +59,18 @@ shadow_audit_contract:
   scenario_methodology_version: SCENARIO-2.3
   compare_against: G4-2.1
   position_stress_budget_sensitivity_nav: [0.005, 0.0075, 0.010, 0.0125, 0.015, 0.020, 0.025]
+  portfolio_stress_budget_sensitivity_nav: [0.06, 0.08, 0.10, 0.12, 0.15]
   security_stress_limit_sensitivity: [-0.15, -0.20, -0.25, -0.30, -0.35, -0.40, -0.45, -0.50]
   production_changes_require_economic_evidence: true
 
 policy_notes:
   - Bull/Base/probabilistic Bear remain the only probability-weighted expected-return scenarios.
   - Severe Stress remains probability zero and is used for preservation sizing.
-  - G4-2.2 replaces the individual -15% Stress veto only in shadow analysis.
   - Position stress contribution equals proposed portfolio weight times absolute Stress return.
-  - Maximum stress-compatible weight equals position stress budget divided by absolute Stress return, capped by the existing maximum single-name weight.
-  - Cash hurdle, minimum margin, transaction costs and all existing penalties remain unchanged from G4-2.1.
+  - Portfolio gross stress is the sum of position stress contributions and is never diversified away.
+  - Correlation-aware stress is a diagnostic sqrt(s' C s), using non-negative 252d correlations; it supplements rather than replaces gross stress.
+  - Candidate sizing is capped by position Stress budget, 5% shadow candidate cap and existing single-name maximum.
+  - The shadow portfolio is constructed greedily by risk-adjusted expected return among data-ready candidates; this is an audit portfolio, not an order proposal.
+  - Concentration is reported with HHI and effective-number-of-positions diagnostics.
+  - Cash hurdle, minimum margin, transaction costs and existing penalties remain unchanged from G4-2.1.
   - G4-2.2 cannot alter production Risk, Committee, Shadow Book or orders during the audit phase.
