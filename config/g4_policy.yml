@@ -51,13 +51,19 @@ penalties:
 # controls tighten or the CCL channel becomes rationed/administratively
 # compressed before exit, forcing settlement at a materially worse effective
 # conversion rate than today's market CCL. This is a market-wide/currency risk
-# factor, applied uniformly to every candidate's Base case, and is evaluated as
-# its own hard downside veto -- never blended into expected return, and kept
-# separate from the fundamental Bear/Stress veto so a failure's cause (company
-# risk vs. currency/regulatory risk) is always auditable.
+# factor, applied uniformly to every candidate's Base case.
+#
+# NOT a PASS/FAIL gate: a CEDEAR holder facing this exact scenario can convert
+# into the underlying foreign shares (canje, via custody transfer to a foreign
+# broker) and exit in USD abroad instead of being forced to sell locally
+# through a degraded CCL. Treating this as an individual hard veto double-
+# counted a risk that has a real, if imperfect and not-always-available, hedge.
+# The stress return is still computed and reported (fx_stress_return_net) and
+# still feeds the allocator's per-position stress budget
+# (src/portfolio/allocation.py: worst_case_stress_loss), so currency/
+# regulatory risk is managed by sizing, not by excluding a name outright.
 fx_regulatory_risk:
   ccl_stress_haircut: 0.25
-  max_fx_stress_downside: -0.20
 
 target_review:
   base_upside_review_threshold: 0.75
@@ -85,4 +91,4 @@ policy_notes:
   - A projected single-name weight above 20% is a hard concentration failure.
   - Execution readiness remains separate from analytical attractiveness.
   - Production thresholds are not relaxed merely to create deployment candidates; max_bear_downside moved from -15% to -40% specifically because g4_sensitivity_audit.py against real data showed the old floor rejected essentially every individual equity regardless of quality, and risk limiting was duplicated with (and better served by) the allocator's stress budget.
-  - FX/regulatory stress is a market-wide risk factor evaluated once per candidate against a degraded CCL, independent of and in addition to the fundamental Bear/Stress veto.
+  - FX/regulatory stress is a market-wide risk factor evaluated once per candidate against a degraded CCL. It is computed and reported (fx_stress_return_net) but is not a PASS/FAIL gate: a CEDEAR holder can hedge this via canje (conversion to the underlying foreign shares, exiting in USD abroad instead of selling locally through a degraded CCL), so it feeds the allocator's stress-budget sizing instead of vetoing a candidate outright.
