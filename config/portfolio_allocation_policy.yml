@@ -1,0 +1,21 @@
+methodology_version: PORTFOLIO-ALLOCATION-1.0
+
+# Joint sizing among simultaneous G4_PASS candidates. G4 already certifies
+# each candidate independently at a fixed 5% test weight; this policy decides
+# how much of NAV each one actually receives when more than one passes at
+# once. Risk-budget constrained rank-fill, not mean-variance optimization --
+# see src/portfolio/allocation.py for the full rationale.
+
+risk_budget:
+  position_stress_budget_nav: 0.02
+  portfolio_stress_budget_nav: 0.10
+  max_single_name_weight: 0.20
+  max_positions: 10
+  min_position_weight: 0.02
+  max_new_deployment_weight_nav: 1.00
+
+policy_notes:
+  - Each candidate's total weight is bounded by the worse of the fundamental Stress and FX/regulatory Stress scenarios G4 already computed, divided into the per-position and portfolio-level stress budgets.
+  - Cash is the endogenous residual after risk-budgeted sizing, never a forced allocation target; 100% NAV is a ceiling only when enough qualifying candidates exist to fill it.
+  - Candidates are filled in risk-adjusted expected-return rank order; a lower-ranked candidate can be partially sized or excluded entirely once the portfolio stress budget binds.
+  - This policy only sizes new buys among current G4_PASS candidates. It does not decide sells or rebalances of existing holdings that no longer pass G4 -- that remains a separate, not-yet-implemented divestment policy.
