@@ -37,7 +37,7 @@ def build_portfolio_stress_shadow(g4_shadow: pd.DataFrame, corr_long: pd.DataFra
     """
     r=policy["risk"]; budget=float(r["position_stress_budget_nav"]); pbudget=float(r["portfolio_stress_budget_nav"])
     maxinvest=float(r.get("portfolio_max_invested_weight",1.0)); maxpos=int(r["portfolio_max_positions"])
-    minw=float(r["portfolio_min_position_weight"]); cap=float(r["portfolio_max_candidate_weight"]); single=float(r["max_single_name_weight"])
+    minw=float(r["portfolio_min_position_weight"]); single=float(r["max_single_name_weight"])
     floor=float(r.get("correlation_floor",0.0))
     df=g4_shadow.copy(); df["shadow_portfolio_weight"]=0.0
     economic=df[df.g4_v22_shadow_status.eq("SHADOW_PASS")].copy()
@@ -48,7 +48,7 @@ def build_portfolio_stress_shadow(g4_shadow: pd.DataFrame, corr_long: pd.DataFra
     for idx,row in economic.iterrows():
         if len(chosen)>=maxpos or remaining_nav<minw-1e-12: break
         loss=abs(float(row.stress_return_net)); max_by_position=(budget/loss if loss>0 else single); max_by_portfolio=(remaining_stress/loss if loss>0 else single)
-        w=min(cap,single,max_by_position,max_by_portfolio,remaining_nav)
+        w=min(single,max_by_position,max_by_portfolio,remaining_nav)
         if w+1e-12<minw: continue
         df.loc[idx,"shadow_portfolio_weight"]=w; chosen.append(idx); remaining_nav-=w; remaining_stress-=w*loss
     sel=df[df.shadow_portfolio_weight>0].copy(); tickers=sel.cedear_ticker.astype(str).tolist()
