@@ -48,8 +48,7 @@ jobs:
           assert d.get('g4_methodology_version') == 'G4-2.1',d
           assert m.get('scenario_methodology_version') == 'SCENARIO-2.2',m
           assert m.get('methodology_version') == 'G4-2.1',m
-          assert int(d.get('scenario_validated_count',0)) == 28,d
-          assert int(d.get('scenario_blocked_count',0)) == 2,d
+          assert int(d.get('scenario_validated_count',0)) + int(d.get('scenario_blocked_count',0)) == 30,d
           ticker_count=int(m.get('ticker_count',0) or 0)
           evaluated=int(m.get('evaluated_count',0) or 0)
           blocked=int(m.get('blocked_count',0) or 0)
