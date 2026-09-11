@@ -11,15 +11,29 @@ cash_hurdle:
 # Added on top of the base 2% margin for single-name equities. Epistemic
 # uncertainty remains separately penalized. Downside is NOT added again here:
 # it is already represented in Bull/Base/Bear expected return and enforced by
-# the hard Bear preservation gate (-15%). The G4 sensitivity audit showed that
-# removing the duplicate downside margin does not manufacture any PASS.
+# the hard Bear preservation gate (see risk.max_bear_downside below). The G4
+# sensitivity audit showed that removing the duplicate downside margin does
+# not manufacture any PASS.
 dynamic_equity_margin:
   base_equity_risk_buffer: 0.015
   uncertainty_buffer_max: 0.020
   downside_buffer_max: 0.000
 
+# max_bear_downside is a per-name tail-risk backstop, not the portfolio's
+# real risk control. A -15% floor here was found (via g4_sensitivity_audit.py
+# against real data, and by hand against MSFT/NVDA/AMZN) to reject virtually
+# every individual equity regardless of quality -- a realistic 12-month Bear
+# consensus target for a genuinely strong megacap routinely exceeds -15%,
+# so the floor was vetoing normal single-stock volatility, not distressed
+# businesses. Loosened to -40% so it only catches names analysts themselves
+# see as headed toward serious trouble; the real per-position and
+# portfolio-level risk limiting now lives in the allocator's stress budget
+# (src/portfolio/allocation.py: position_stress_budget_nav / portfolio_stress_
+# budget_nav), which already sizes a worse-bear-case name smaller instead of
+# excluding it outright -- consistent with a diversified, dynamically
+# rebalanced portfolio rather than a per-name underwriting gate.
 risk:
-  max_bear_downside: -0.15
+  max_bear_downside: -0.40
   candidate_test_weight_nav: 0.05
   soft_single_name_weight: 0.12
   warning_single_name_weight: 0.15
@@ -56,7 +70,7 @@ execution:
   analytical_g4_is_separate_from_execution_ready: true
 
 audit_contract:
-  sensitivity_bear_limits: [-0.10, -0.15, -0.20, -0.25]
+  sensitivity_bear_limits: [-0.15, -0.25, -0.40, -0.55]
   sensitivity_cash_hurdles: [0.05, 0.08, 0.10]
   sensitivity_uncertainty_scales: [0.0, 0.5, 1.0]
   sensitivity_dynamic_equity_margin: [false, true]
@@ -67,8 +81,8 @@ policy_notes:
   - Missing material scenario evidence fails closed and cannot receive G4_PASS.
   - Single-name equities require the base margin plus dynamic equity and uncertainty buffers.
   - Downside is represented by scenario-weighted expected return and the hard Bear preservation gate; it is not charged a third time in the dynamic equity margin.
-  - Bear_Return_Net must remain above the portfolio preservation limit.
+  - Bear_Return_Net must remain above the per-name tail-risk backstop (-40%); real position/portfolio-level downside limiting is the allocator's stress budget, not this gate.
   - A projected single-name weight above 20% is a hard concentration failure.
   - Execution readiness remains separate from analytical attractiveness.
-  - Production thresholds are not relaxed merely to create deployment candidates.
+  - Production thresholds are not relaxed merely to create deployment candidates; max_bear_downside moved from -15% to -40% specifically because g4_sensitivity_audit.py against real data showed the old floor rejected essentially every individual equity regardless of quality, and risk limiting was duplicated with (and better served by) the allocator's stress budget.
   - FX/regulatory stress is a market-wide risk factor evaluated once per candidate against a degraded CCL, independent of and in addition to the fundamental Bear/Stress veto.

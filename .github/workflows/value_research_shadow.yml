@@ -111,4 +111,4 @@ jobs:
           retention-days: 90
       - name: Dispatch shadow G4 against this run's result
         if: ${{ github.event_name == 'schedule' || inputs.dispatch_g4 == true }}
-        run: gh workflow run value_research_shadow_g4.yml --ref "${GITHUB_REF_NAME}" -f code_ref=main -f shadow_run_id="${GITHUB_RUN_ID}"
+        run: gh workflow run value_research_shadow_g4.yml --ref "${GITHUB_REF_NAME}" -f code_ref="${{ inputs.code_ref || 'main' }}" -f shadow_run_id="${GITHUB_RUN_ID}"

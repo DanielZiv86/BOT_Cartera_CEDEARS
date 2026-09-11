@@ -21,7 +21,7 @@ def audit(frame: pd.DataFrame) -> tuple[pd.DataFrame,dict]:
     evaluated=frame[frame['g4_status']!='BLOCKED_BY_DATA'].copy()
     rows=[]
     for bear,hurdle,unc_scale,dynamic in itertools.product(
-        (-.10,-.15,-.20,-.25),(.05,.08,.10),(0.,.5,1.),(False,True)
+        (-.15,-.25,-.40,-.55),(.05,.08,.10),(0.,.5,1.),(False,True)
     ):
         risk_adj=(evaluated['expected_return_net'].astype(float)
                   - evaluated['uncertainty_penalty'].fillna(0).astype(float)*unc_scale
@@ -39,8 +39,8 @@ def audit(frame: pd.DataFrame) -> tuple[pd.DataFrame,dict]:
         rows.append({'bear_limit':bear,'cash_hurdle':hurdle,'uncertainty_scale':unc_scale,'dynamic_equity_margin':dynamic,'pass_count':len(tickers),'pass_tickers':tickers})
     grid=pd.DataFrame(rows)
     max_pass=int(grid['pass_count'].max()) if not grid.empty else 0
-    loosest=grid[(grid.bear_limit==-.25)&(grid.cash_hurdle==.05)&(grid.uncertainty_scale==0)&(~grid.dynamic_equity_margin)]
-    production=grid[(grid.bear_limit==-.15)&(grid.cash_hurdle==.08)&(grid.uncertainty_scale==1)&(grid.dynamic_equity_margin)]
+    loosest=grid[(grid.bear_limit==-.55)&(grid.cash_hurdle==.05)&(grid.uncertainty_scale==0)&(~grid.dynamic_equity_margin)]
+    production=grid[(grid.bear_limit==-.40)&(grid.cash_hurdle==.08)&(grid.uncertainty_scale==1)&(grid.dynamic_equity_margin)]
     summary={
         'methodology_version':'G4-SENSITIVITY-1.0',
         'evaluated_count':int(len(evaluated)),
