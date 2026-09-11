@@ -24,13 +24,13 @@ risk:
   correlation_warning: 0.75
   position_stress_budget_nav: 0.02
 
-  # Second-level preservation audit. These are shadow calibrations only.
+  # Shadow calibrations only. 100% is a ceiling, never a forced allocation target.
   portfolio_stress_budget_nav: 0.10
   portfolio_stress_budget_mode: AUDIT_ONLY
-  portfolio_target_invested_weight: 0.50
+  portfolio_max_invested_weight: 1.00
   portfolio_max_positions: 10
   portfolio_min_position_weight: 0.02
-  portfolio_max_candidate_weight: 0.05
+  portfolio_max_candidate_weight: 0.20
   correlation_lookback_days: 252
   correlation_floor: 0.00
   correlation_missing_behavior: FAIL_CLOSED
@@ -58,19 +58,22 @@ execution:
 shadow_audit_contract:
   scenario_methodology_version: SCENARIO-2.3
   compare_against: G4-2.1
-  position_stress_budget_sensitivity_nav: [0.005, 0.0075, 0.010, 0.0125, 0.015, 0.020, 0.025]
-  portfolio_stress_budget_sensitivity_nav: [0.06, 0.08, 0.10, 0.12, 0.15]
+  position_stress_budget_sensitivity_nav: [0.005, 0.0075, 0.010, 0.0125, 0.015, 0.020, 0.025, 0.030]
+  portfolio_stress_budget_sensitivity_nav: [0.06, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25]
   security_stress_limit_sensitivity: [-0.15, -0.20, -0.25, -0.30, -0.35, -0.40, -0.45, -0.50]
   production_changes_require_economic_evidence: true
 
 policy_notes:
   - Bull/Base/probabilistic Bear remain the only probability-weighted expected-return scenarios.
   - Severe Stress remains probability zero and is used for preservation sizing.
+  - Economic eligibility is mandatory before any shadow portfolio weight can be assigned: only SHADOW_PASS candidates may receive weight.
+  - 100% NAV is the maximum investable ceiling when enough qualifying opportunities exist; it is not a target that the allocator must fill.
+  - Cash is the endogenous residual after economic eligibility and risk sizing, not a strategic 50% floor.
   - Position stress contribution equals proposed portfolio weight times absolute Stress return.
   - Portfolio gross stress is the sum of position stress contributions and is never diversified away.
   - Correlation-aware stress is a diagnostic sqrt(s' C s), using non-negative 252d correlations; it supplements rather than replaces gross stress.
-  - Candidate sizing is capped by position Stress budget, 5% shadow candidate cap and existing single-name maximum.
-  - The shadow portfolio is constructed greedily by risk-adjusted expected return among data-ready candidates; this is an audit portfolio, not an order proposal.
+  - Candidate sizing is capped by position Stress budget and the existing 20% single-name maximum.
   - Concentration is reported with HHI and effective-number-of-positions diagnostics.
-  - Cash hurdle, minimum margin, transaction costs and existing penalties remain unchanged from G4-2.1.
+  - Cash hurdle, minimum margin, transaction costs and existing penalties remain unchanged from G4-2.1 during this audit.
+  - USD purchasing-power erosion is a reason to avoid arbitrary cash floors, but does not justify investing in candidates that fail the economic hurdle.
   - G4-2.2 cannot alter production Risk, Committee, Shadow Book or orders during the audit phase.
