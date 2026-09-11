@@ -1,8 +1,12 @@
-methodology_version: VALUE-SCREEN-1.0-SHADOW
+methodology_version: VALUE-SCREEN-1.0
 
-# SHADOW ONLY. This policy feeds src/orchestration/build_value_research_shadow.py,
-# an isolated audit workflow. It does not feed production Research, Valuation,
-# G4, Risk or Committee. See the Fase 1 plan: value-first Top-30 redesign.
+# Fase 2 production policy. Feeds src/orchestration/build_value_research_screening.py
+# (weekly_screening.yml): equities are selected for the Research Top-N by
+# value_score (fundamentals), not by the technical screening_score, which is
+# used only as a binary entry-timing gate. Cut over after the value-first
+# shadow (src/orchestration/build_value_research_shadow.py, still available
+# as an isolated audit tool) showed the prior technical-only selection
+# structurally excluded every ticker that went on to pass G4.
 
 components:
   consensus_upside_to_base:
