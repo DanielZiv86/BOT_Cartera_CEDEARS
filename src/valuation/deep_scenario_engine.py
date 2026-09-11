@@ -120,7 +120,9 @@ def _financial_targets(row,current,median,bull_cap,policy):
 def _energy_targets(row,current,median,bull_cap,policy):
     c=policy.get('energy',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); fcf=_rate(_first_num(row,'fundamental_fcf_yield','fcf_yield')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
     if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('ENERGY_FUNDAMENTALS_INCOMPLETE')
-    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median; bear=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); bull=min(bf*float(c.get('bull_cycle_factor',1.28))+current*div,bull_cap); return bear,base,bull,['ENERGY_CYCLE_NORMALIZATION_APPLIED']
+    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median; bear=bf*float(c.get('bear_cycle_factor',.72))+current*div*float(c.get('dividend_credit',.5)); raw_bull=bf*float(c.get('bull_cycle_factor',1.28))+current*div; min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=['ENERGY_CYCLE_NORMALIZATION_APPLIED']
+    if bull>raw_bull:flags.append('ENERGY_BULL_ORDERING_FLOOR_APPLIED')
+    return bear,base,bull,flags
 
 def _equity_review(row,policy):
     out=row.to_dict(); blockers=[]; flags=[]; current=_num(row.get('current_price')); confidence=_num(row.get('valuation_confidence'))

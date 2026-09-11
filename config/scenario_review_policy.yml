@@ -116,6 +116,7 @@ energy:
   bear_cycle_factor: 0.72
   bull_cycle_factor: 1.28
   dividend_credit: 0.50
+  minimum_bull_premium_to_base: 0.10
 
 consensus:
   dispersion_review_threshold: 0.75
