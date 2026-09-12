@@ -13,8 +13,8 @@ P = AllocationPolicy(
 )
 
 
-def _row(ticker, *, g4_status="G4_PASS", er=0.10, bear=-0.10, fx=-0.10, existing=0.0):
-    return {
+def _row(ticker, *, g4_status="G4_PASS", er=0.10, bear=-0.10, fx=-0.10, existing=0.0, diversification_score=None):
+    row = {
         "cedear_ticker": ticker,
         "g4_status": g4_status,
         "risk_adjusted_er": er,
@@ -22,6 +22,9 @@ def _row(ticker, *, g4_status="G4_PASS", er=0.10, bear=-0.10, fx=-0.10, existing
         "fx_stress_return_net": fx,
         "existing_weight": existing,
     }
+    if diversification_score is not None:
+        row["diversification_score"] = diversification_score
+    return row
 
 
 def test_no_pass_candidates_yields_empty_allocation():
@@ -106,6 +109,55 @@ def test_worst_case_loss_takes_the_larger_of_fundamental_and_fx_stress():
     g4 = pd.DataFrame([_row("A", er=0.10, bear=-0.05, fx=-0.18)])
     allocated, _ = build_portfolio_allocation(g4, P)
     assert allocated.iloc[0]["worst_case_stress_loss"] == pytest.approx(0.18)
+
+
+def test_diversification_score_scales_position_stress_budget():
+    # Same loss (0.10) and same policy as test_single_candidate_sized_by_
+    # position_stress_budget, but a low diversification_score (heavily
+    # correlated with what's already held) should shrink the position budget
+    # below the plain 0.02/0.10=0.20 that a neutral (score-less) candidate
+    # gets, and a high score should let it grow (capped by max_single_name_weight).
+    correlated = pd.DataFrame([_row("CORR", er=0.10, bear=-0.10, fx=-0.05, diversification_score=0)])
+    allocated, _ = build_portfolio_allocation(correlated, P)
+    # multiplier at score=0 is diversification_multiplier_min (0.5) -> effective budget 0.01 -> 0.01/0.10=0.10
+    assert allocated.iloc[0]["target_weight"] == pytest.approx(0.10)
+    assert allocated.iloc[0]["diversification_multiplier"] == pytest.approx(0.5)
+
+    diversifying = pd.DataFrame([_row("DIV", er=0.10, bear=-0.10, fx=-0.05, diversification_score=100)])
+    allocated2, _ = build_portfolio_allocation(diversifying, P)
+    # multiplier at score=100 is diversification_multiplier_max (1.5) -> effective budget 0.03 -> 0.03/0.10=0.30, capped at max_single_name_weight=0.20
+    assert allocated2.iloc[0]["target_weight"] == pytest.approx(0.20)
+    assert allocated2.iloc[0]["diversification_multiplier"] == pytest.approx(1.5)
+
+
+def test_missing_diversification_score_is_neutral_same_as_before():
+    g4 = pd.DataFrame([_row("A", er=0.10, bear=-0.10, fx=-0.05)])
+    allocated, _ = build_portfolio_allocation(g4, P)
+    assert allocated.iloc[0]["diversification_multiplier"] == pytest.approx(1.0)
+    assert allocated.iloc[0]["target_weight"] == pytest.approx(0.20)
+
+
+def test_existing_holdings_stress_reduces_room_for_new_candidates():
+    g4 = pd.DataFrame([_row("A", er=0.10, bear=-0.10, fx=-0.08)])
+    # Same candidate as test_single_candidate_sized_by_position_stress_budget
+    # (which gets 0.20 with a fresh 0.10 portfolio budget), but now 0.08 of
+    # that 0.10 whole-portfolio stress budget is already used by currently
+    # held positions -- only 0.02 remains for new buys -> 0.02/0.10=0.20 is
+    # still the position-budget cap (0.02), but the *portfolio* cap now binds
+    # tighter: 0.02 remaining / 0.10 loss = 0.20 -- exactly at the position
+    # cap here, so tighten further to make the portfolio cap the binding one.
+    allocated, metrics = build_portfolio_allocation(g4, P, existing_holdings_stress_nav=0.085)
+    # remaining portfolio budget = 0.10-0.085=0.015 -> 0.015/0.10=0.15, tighter than the 0.20 position-budget cap
+    assert allocated.iloc[0]["target_weight"] == pytest.approx(0.15)
+    assert metrics["existing_holdings_stress_contribution_nav"] == pytest.approx(0.085)
+    assert metrics["total_portfolio_stress_contribution_nav"] == pytest.approx(0.085 + 0.15 * 0.10)
+    assert metrics["portfolio_stress_budget_ok"]
+
+
+def test_existing_holdings_stress_cannot_be_negative():
+    g4 = pd.DataFrame([_row("A")])
+    with pytest.raises(ValueError):
+        build_portfolio_allocation(g4, P, existing_holdings_stress_nav=-0.01)
 
 
 def test_missing_required_column_fails_closed():

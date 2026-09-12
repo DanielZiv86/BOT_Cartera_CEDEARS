@@ -1,6 +1,6 @@
 # BOT_Cartera_CEDEARS — instructions for Claude
 
-Autonomous CEDEAR portfolio pipeline for Daniel (danielzivkovich@gmail.com). 12-month primary / 24-month max horizon, capital preservation in USD as the primary constraint, home-purchase objective ($20,000 additional USD by 2028-09-11).
+Autonomous CEDEAR portfolio pipeline for Daniel (danielzivkovich@gmail.com). Single mandate: reach or exceed $20,000 additional USD by 2028-09-11 (24-month horizon), using the capital available. Risk management (G4 Bear discipline, correlation-awareness, fail-closed data handling) exists to serve that goal reliably, not as a competing "preserve capital first" constraint -- see PROJECT_STATE.md's Objective section for the full framing.
 
 **Read `PROJECT_STATE.md` first, every session.** It has the current pipeline architecture, what changed most recently, and the open items to pick up next — this file only has the standing rules that don't change session to session.
 
