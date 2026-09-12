@@ -1,0 +1,69 @@
+{
+  "portfolio_state_version": "PORTFOLIO-BASELINE-20260912",
+  "snapshot_id": "BASELINE-20260912",
+  "rule_set_version": "RS-1.0",
+  "as_of": "2026-09-12T00:00:00-03:00",
+  "currency": "USD",
+  "nav_total_usd": 49086.96905175124,
+  "nav_cedear_usd": 19080.36,
+  "cash_usd": 30006.61,
+  "cash_weight": 0.6112948218164527,
+  "cedear_weight": 0.38870519750127625,
+  "positions": [
+    {
+      "cedear_ticker": "ADP",
+      "nominales": 37,
+      "weight": 0.037117793891065225,
+      "value_usd_approx": 1822.0
+    },
+    {
+      "cedear_ticker": "BRKB",
+      "nominales": 136,
+      "weight": 0.06661645775180203,
+      "value_usd_approx": 3270.0
+    },
+    {
+      "cedear_ticker": "GOOGL",
+      "nominales": 77,
+      "weight": 0.009656330573196991,
+      "value_usd_approx": 474.0
+    },
+    {
+      "cedear_ticker": "RTX",
+      "nominales": 42,
+      "weight": 0.03599733359248752,
+      "value_usd_approx": 1767.0
+    },
+    {
+      "cedear_ticker": "SPGI",
+      "nominales": 233,
+      "weight": 0.049239137121133175,
+      "value_usd_approx": 2417.0
+    },
+    {
+      "cedear_ticker": "VEA",
+      "nominales": 278,
+      "weight": 0.043351627552243026,
+      "value_usd_approx": 2128.0
+    },
+    {
+      "cedear_ticker": "VIG",
+      "nominales": 722,
+      "weight": 0.09521875337367665,
+      "value_usd_approx": 4674.0,
+      "underlying_ticker": "VIG",
+      "underlying_market": "NYSE ARCA",
+      "instrument_type": "ETF tradicional",
+      "cedear_byma_symbol": "VIG",
+      "market_data_identity_provenance": "CURRENT_PORTFOLIO_CANONICAL_IDENTITY"
+    },
+    {
+      "cedear_ticker": "XLV",
+      "nominales": 564,
+      "weight": 0.07152611106011526,
+      "value_usd_approx": 3511.0
+    }
+  ],
+  "source": "User-provided portfolio snapshot, 2026-09-12",
+  "status": "CANONICAL_BASELINE"
+}
