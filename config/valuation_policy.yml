@@ -12,7 +12,15 @@ quality:
   maximum_etf_holdings_to_analyze: 50
   maximum_direct_constituent_lookups_per_etf: 25
   preferred_global_direct_constituent_lookups: 40
-  maximum_global_direct_constituent_lookups: 60
+  # Was 60, sized for when Valuation only ran on the pre-selected Top-30 (at
+  # most 6 ETF slots). Since the Fase 2 cutover, Valuation runs on the full
+  # canonical universe (~36 ETFs), so a global budget of 60 starves whichever
+  # ETFs are processed later in iteration order -- confirmed for IBB (only 4
+  # of ~25 holdings got a direct lookup before the budget ran out, well under
+  # minimum_etf_covered_weight). Raised to give each of ~36 ETFs a realistic
+  # share; still a hard ceiling, not every ETF will use its full share
+  # (many holdings are already covered by the equity universe's own cache).
+  maximum_global_direct_constituent_lookups: 300
 provider_fallbacks:
   finnhub_premium_etf_enabled: false
 instrument_overrides:

@@ -37,11 +37,18 @@ identity:
     EQNR:
       ordinary_shares_per_ads: 1.0
       source: EQUINOR_OFFICIAL_ANNUAL_REPORT_ADS_1_TO_1
+    UL:
+      ordinary_shares_per_ads: 1.0
+      source: UNILEVER_SEC_DESCRIPTION_OF_SECURITIES_1_TO_1
   verified_direct_foreign_listings:
     AEG:
       ordinary_shares_per_us_traded_share: 1.0
       security_type: NEW_YORK_REGISTRY_SHARE
       source: AEGON_OFFICIAL_NEW_YORK_REGISTRY_SHARE_1_TO_1
+    PAGS:
+      ordinary_shares_per_us_traded_share: 1.0
+      security_type: NYSE_LISTED_CLASS_A_COMMON_SHARE
+      source: PAGSEGURO_SEC_20F_DESCRIPTION_OF_SECURITIES_1_TO_1
 
 sector_classification:
   fail_closed_when_unverified: true
@@ -163,6 +170,8 @@ policy_notes:
   - Foreign issuers traded in the US fail closed unless an explicit verified ADR/ADS ratio, verified direct/New York Registry mapping, or upstream verified economic-unit normalization exists.
   - Aegon AEG is a verified New York Registry common share, not an ADR; one NYRS equals one Amsterdam-listed common share.
   - Equinor EQNR is a verified NYSE ADS; each ADS represents one ordinary share.
+  - Unilever PLC (UL) is a verified NYSE ADS; each ADS represents one ordinary PLC share (SEC Description of Securities exhibit).
+  - PagSeguro Digital (PAGS) Class A common shares trade directly on the NYSE with no ADR/ADS wrapper (confirmed via its SEC 20-F Description of Securities exhibit: "Our Class A common shares are listed on the NYSE under the symbol 'PAGS'"), so it is a 1:1 direct foreign listing like AEG, not an ADR ratio.
   - EPS x P/E is the primary economic identity; P/B x BVPS is an auditable fallback when positive EPS/P/E identity is unavailable.
   - A foreign/ADR unit mismatch remains blocked when no verified normalization exists.
   - Official Banco Comafi Industria o sector metadata is propagated from the canonical universe and is preferred for sector routing.
