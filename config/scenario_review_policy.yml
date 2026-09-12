@@ -76,6 +76,23 @@ sector_overrides:
   SHEL: ENERGY
   V: CORPORATE
   MA: CORPORATE
+  # These currently held positions have industry_sector_official=None at the
+  # universe level (a Comafi catalogue metadata gap, not a keyword-matching
+  # issue -- text-based classification never even runs when the field is
+  # missing), so the scenario engine fails closed with
+  # SECTOR_CLASSIFICATION_UNVERIFIED and can never compute a Bear/Base/Bull
+  # case for them. Explicit overrides, same mechanism already used for V/MA
+  # above, based on well-established public sector classification:
+  # BRKB's underlying_ticker is "BRK/B" (with the class-share slash), which is
+  # what _classify_sector actually keys on (it prefers underlying_ticker over
+  # cedear_ticker) -- both spellings are listed so the override matches
+  # regardless of which field is populated for a given row.
+  BRKB: FINANCIALS
+  BRK/B: FINANCIALS
+  SPGI: FINANCIALS
+  ADP: CORPORATE
+  RTX: CORPORATE
+  GOOGL: CORPORATE
 
 corporate:
   base_growth_floor: -0.10
