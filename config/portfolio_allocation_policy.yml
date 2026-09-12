@@ -1,21 +1,49 @@
-methodology_version: PORTFOLIO-ALLOCATION-1.0
+methodology_version: PORTFOLIO-ALLOCATION-1.1
 
-# Joint sizing among simultaneous G4_PASS candidates. G4 already certifies
-# each candidate independently at a fixed 5% test weight; this policy decides
-# how much of NAV each one actually receives when more than one passes at
-# once. Risk-budget constrained rank-fill, not mean-variance optimization --
-# see src/portfolio/allocation.py for the full rationale.
+# Joint sizing among simultaneous G4_PASS candidates, in the context of the
+# WHOLE current portfolio -- not each candidate in isolation. G4 already
+# certifies each candidate independently: positive risk-adjusted margin vs
+# cash, and compatible with both the fundamental and FX/regulatory Stress
+# downside vetoes at a fixed 5% test weight. This policy decides how much of
+# NAV each one actually receives, accounting for the risk already sitting in
+# currently-held positions and how much a new candidate actually diversifies
+# the book (not just its own standalone merit). Risk-budget constrained
+# rank-fill, not mean-variance optimization -- see src/portfolio/allocation.py
+# for the full rationale.
 
 risk_budget:
   position_stress_budget_nav: 0.02
-  portfolio_stress_budget_nav: 0.10
+  # Raised from 0.10 (single-mandate reframe, 2026-09-12): the mandate is now
+  # to reach/exceed the $ goal using the capital available, not to preserve
+  # capital as an independent competing constraint -- see PROJECT_STATE.md's
+  # Objective. Under the old 10% budget the allocator could only ever deploy
+  # ~24% of NAV even with 4 real G4_PASS candidates (~33% Bear each), leaving
+  # a blended portfolio return nowhere near the pace the goal requires.
+  # 30% still leaves real headroom: today's 8 held positions' OWN worst-case
+  # stress (the 6 that can currently be risk-assessed -- BRKB and VIG cannot
+  # yet, see PROJECT_STATE.md's open items) sums to ~6.4% of NAV, so this
+  # still reserves meaningful room for genuinely strong new candidates
+  # without being unbounded.
+  portfolio_stress_budget_nav: 0.30
   max_single_name_weight: 0.20
   max_positions: 10
   min_position_weight: 0.02
   max_new_deployment_weight_nav: 1.00
+  # A candidate's effective position_stress_budget_nav is scaled by these
+  # bounds based on its diversification_score (0-100, already computed by
+  # src/risk/portfolio_fit.py against the real current holdings): 0.5x at
+  # score 0 (heavily correlated with what's already held -- less room, since
+  # it adds concentrated risk without real diversification benefit), 1.5x at
+  # score 100 (genuinely diversifying -- more room), 1.0x (unchanged) at the
+  # neutral midpoint of 50 or when the score is unavailable.
+  diversification_multiplier_min: 0.5
+  diversification_multiplier_max: 1.5
+  diversification_score_neutral: 50.0
 
 policy_notes:
-  - Each candidate's total weight is bounded by the worse of the fundamental Stress and FX/regulatory Stress scenarios G4 already computed, divided into the per-position and portfolio-level stress budgets.
+  - Each candidate's total weight is bounded by the worse of the fundamental Stress and FX/regulatory Stress scenarios G4 already computed, divided into a diversification-scaled per-position stress budget and the remaining portfolio-level stress budget.
+  - portfolio_stress_budget_nav covers the WHOLE portfolio's worst-case simultaneous loss -- existing holdings' own stress contribution (computed upstream against the broad valuation for tickers outside this week's Top-30) is reserved before sizing any new buy, not just new-deployment risk in isolation.
   - Cash is the endogenous residual after risk-budgeted sizing, never a forced allocation target; 100% NAV is a ceiling only when enough qualifying candidates exist to fill it.
   - Candidates are filled in risk-adjusted expected-return rank order; a lower-ranked candidate can be partially sized or excluded entirely once the portfolio stress budget binds.
+  - Risk management here exists to reach the $ goal reliably, not as an independent competing constraint against it -- see PROJECT_STATE.md's Objective for the full single-mandate framing (redefined 2026-09-12).
   - This policy only sizes new buys among current G4_PASS candidates. It does not decide sells or rebalances of existing holdings that no longer pass G4 -- that remains a separate, not-yet-implemented divestment policy.

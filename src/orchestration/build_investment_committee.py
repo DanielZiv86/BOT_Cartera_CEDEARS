@@ -21,6 +21,9 @@ def _load_allocation_policy(path: str) -> AllocationPolicy:
         max_positions=int(rb.get('max_positions', 10)),
         min_position_weight=float(rb.get('min_position_weight', .02)),
         max_new_deployment_weight_nav=float(rb.get('max_new_deployment_weight_nav', 1.00)),
+        diversification_multiplier_min=float(rb.get('diversification_multiplier_min', .5)),
+        diversification_multiplier_max=float(rb.get('diversification_multiplier_max', 1.5)),
+        diversification_score_neutral=float(rb.get('diversification_score_neutral', 50.0)),
     )
 
 
@@ -31,6 +34,19 @@ def _build_new_trades(g4_dir: Path, allocation_policy_path: str) -> tuple[list[d
     own decision waterfall has already determined passes>0 and every other
     gate (risk veto, data gaps) allows candidates to proceed -- this function
     only decides how much, never whether.
+
+    KNOWN GAP (2026-09-12): existing_holdings_stress_nav is left at its
+    default (0.0) here -- currently-held positions' own worst-case stress
+    contribution is not yet subtracted from portfolio_stress_budget_nav
+    before sizing new buys, because that requires the broad-universe deep
+    scenario review for held tickers outside this week's Top-30, which this
+    orchestration does not yet receive as an input. portfolio_stress_budget_nav
+    was raised to 30% assuming that offset (see config/portfolio_allocation_
+    policy.yml's policy_notes), so until this is wired, the true whole-
+    portfolio worst-case stress can exceed the configured budget by however
+    much the currently-held book itself is exposed. Wiring this is the next
+    concrete step, not a reason to leave the budget at the old, options-
+    starved 10%.
     """
     g4_result = pd.read_parquet(g4_dir / 'g4_cash_hurdle.parquet')
     policy = _load_allocation_policy(allocation_policy_path)

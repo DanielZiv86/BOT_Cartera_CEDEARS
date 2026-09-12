@@ -4,7 +4,7 @@ _Last updated: 2026-09-11 (end of session)_
 
 ## Objective
 
-Autonomous, professional CEDEAR portfolio-management pipeline for a 12-month investment horizon (maximum reasonable horizon 24 months), with capital preservation in USD as the primary constraint and a home-purchase objective: **$20,000 additional USD by 2028-09-11** (24 months from 2026-09-11), on top of current NAV (~$49,087 as of this session).
+**Single mandate (redefined 2026-09-12, supersedes any earlier "capital preservation is primary" framing): build a CEDEAR portfolio, using the capital available, that reaches or exceeds $20,000 additional USD by 2028-09-11** (24 months from 2026-09-11), on top of current NAV (~$49,087). Risk management is not a competing constraint against this goal -- it exists in service of reaching it reliably. G4/Bear-case discipline, correlation-awareness and fail-closed data handling all still apply; what changed is that sizing is no longer capped by an independent "preserve capital first" ceiling, and every new-buy proposal must be evaluated against the whole current portfolio (existing holdings' own risk + correlation), not in isolation. Weekly pace is expected to fluctuate with what the market actually offers -- the system does not fabricate or relax fundamental analysis to hit a return number on schedule; see `goal_tracking` for the running pace metric.
 
 The pipeline must not manufacture deployment candidates. `NO_NEW_DEPLOYMENT` remains valid unless downstream stages, using consistent lineage and verified data, justify otherwise.
 
