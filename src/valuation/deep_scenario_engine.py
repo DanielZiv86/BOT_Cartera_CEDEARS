@@ -98,7 +98,26 @@ def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,An
     adr,adr_verified,adr_source,security_type=_verified_security_mapping(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
     implied_eps=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; ratio_eps=implied_eps/current if implied_eps is not None and current and current>0 else None
     bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); implied_pb=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None; ratio_pb=implied_pb/current if implied_pb is not None and current and current>0 else None
-    lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80)); identity_method='EPS_PE' if ratio_eps is not None else ('PB' if ratio_pb is not None else 'UNVERIFIABLE'); ratio=ratio_eps if ratio_eps is not None else ratio_pb; implied=implied_eps if ratio_eps is not None else implied_pb
+    lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80))
+    eps_pe_in_band=ratio_eps is not None and lo<=ratio_eps<=hi; pb_in_band=ratio_pb is not None and lo<=ratio_pb<=hi
+    if ratio_eps is not None and not eps_pe_in_band and pb_in_band:
+        # HON found 2026-09-14: EPS/PE definitional noise (normalized vs.
+        # trailing EPS, one-time items -- e.g. a recent portfolio spinoff)
+        # can push the ratio just outside the tolerance band even when the
+        # security's price identity is genuinely fine. Before blocking on
+        # the EPS/PE ratio alone, corroborate with the independent
+        # book-value/price-to-book check: if that ratio lands cleanly inside
+        # the band, it's real evidence this isn't a unit/scale mismatch, so
+        # use it instead -- never rescues a genuine mismatch, since a real
+        # unit-scale bug (BRKB pre-fix, TEN pre-fix, ERIC's currency issue)
+        # throws both ratios out of band together, not just one of them.
+        identity_method='PB'; ratio=ratio_pb; implied=implied_pb; flags.append('ECONOMIC_IDENTITY_PB_CORROBORATION_RESCUES_EPS_PE_MISS')
+    elif ratio_eps is not None:
+        identity_method='EPS_PE'; ratio=ratio_eps; implied=implied_eps
+    elif ratio_pb is not None:
+        identity_method='PB'; ratio=ratio_pb; implied=implied_pb
+    else:
+        identity_method='UNVERIFIABLE'; ratio=None; implied=None
     if ratio is None:blockers.append('ECONOMIC_IDENTITY_UNVERIFIABLE')
     elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{identity_method}_UNIT_MISMATCH')
     if not str(row.get('underlying_ticker') or '').strip():blockers.append('ECONOMIC_IDENTITY_UNDERLYING_MISSING')

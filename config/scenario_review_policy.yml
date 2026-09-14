@@ -40,6 +40,21 @@ identity:
     UL:
       ordinary_shares_per_ads: 1.0
       source: UNILEVER_SEC_DESCRIPTION_OF_SECURITIES_1_TO_1
+    # Confirmed 2026-09-14 while investigating ECONOMIC_IDENTITY_EPS_PE_
+    # UNIT_MISMATCH on TEN: Tenaris's real broad-valuation row (eps=1.8304,
+    # pe=15.6591, current_price=$57.39) implies a ratio of only 0.499 without
+    # any ADR adjustment -- well below the 0.55 floor. Tenaris's own investor
+    # relations page (ADR Program) states 1 ADS = 2 ordinary shares, a ratio
+    # unchanged since a 2006 board-approved change from the original 10:1
+    # (documented in Tenaris's SEC Form 6-K FY2006) -- not a guessed
+    # multiplier. Applying ordinary_shares_per_ads=2 brings the implied ratio
+    # to 0.999, essentially a perfect match.
+    TEN:
+      ordinary_shares_per_ads: 2.0
+      source: TENARIS_IR_ADR_PROGRAM_PAGE_2_TO_1_SINCE_2006
+    TS:
+      ordinary_shares_per_ads: 2.0
+      source: TENARIS_IR_ADR_PROGRAM_PAGE_2_TO_1_SINCE_2006
   verified_direct_foreign_listings:
     AEG:
       ordinary_shares_per_us_traded_share: 1.0
