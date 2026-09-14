@@ -2,6 +2,19 @@ version: INC-20260907-003
 effective_date: "2026-09-07"
 reason_code: REQUIRED_CURRENT_PROGRAM_MISSING_OR_INCOMPLETE_IN_BASELINE
 rows:
+  # 2026-09-14: SPCX (SpaceX CEDEAR) was investigated here as a candidate
+  # mandate exception (same real-data diligence as VIG below -- confirmed
+  # via BYMA's own newsroom announcement, checked directly against both live
+  # Comafi catalogue pages, zero matches) after showing up in the user's
+  # Balanz statement. The user then explicitly confirmed SPCX is OUT OF
+  # SCOPE for this bot's analysis, same as the separate corporate-bond
+  # sleeve in that statement -- not a position this pipeline should track,
+  # value, or recommend around. Row deliberately NOT added here. See
+  # PROJECT_STATE.md for the full investigation trail; a real, general bug
+  # found in src/universe/symbol_map.py while validating this (unresolved
+  # BYMA symbols colliding into the literal string "NAN") was kept fixed
+  # regardless of this reversal -- it was never SPCX-specific.
+
   # 2026-09-14: VIG does not appear in Comafi's or Caja de Valores' current
   # live catalogues (verified directly against both -- searched by ticker,
   # issuer name, ISIN and caja_code; VEA, on the same Comafi page, matches
