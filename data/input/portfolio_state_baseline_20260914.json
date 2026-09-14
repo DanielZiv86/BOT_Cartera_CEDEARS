@@ -4,27 +4,26 @@
   "rule_set_version": "RS-1.0",
   "as_of": "2026-09-14T15:20:00-03:00",
   "currency": "USD",
-  "nav_total_usd": 52005.61,
-  "nav_cedear_usd": 21999,
+  "nav_total_usd": 49615.61,
+  "nav_cedear_usd": 19609,
   "cash_usd": 30006.61,
-  "cash_weight": 0.5769879441852523,
-  "cedear_weight": 0.42301205581474766,
+  "cash_weight": 0.6047816402942542,
+  "cedear_weight": 0.3952183597057458,
   "positions": [
-    {"cedear_ticker":"ADP","nominales":37,"weight":0.033111812360243444,"value_usd_approx":1722},
-    {"cedear_ticker":"BRKB","nominales":136,"weight":0.06380080918193248,"value_usd_approx":3318},
-    {"cedear_ticker":"GOOGL","nominales":77,"weight":0.009268230869708094,"value_usd_approx":482},
-    {"cedear_ticker":"RTX","nominales":42,"weight":0.03297721149699042,"value_usd_approx":1715},
-    {"cedear_ticker":"SPCX","nominales":755,"weight":0.04595658045353184,"value_usd_approx":2390,"underlying_ticker":"SPCX","underlying_market":"NASDAQ","instrument_type":"ADR","market_data_identity_provenance":"USER_BALANZ_STATEMENT_20260914_PENDING_UNIVERSE_INCLUSION"},
-    {"cedear_ticker":"SPGI","nominales":233,"weight":0.04359145099922874,"value_usd_approx":2267},
-    {"cedear_ticker":"VEA","nominales":278,"weight":0.04024565811265361,"value_usd_approx":2093},
-    {"cedear_ticker":"VIG","nominales":722,"weight":0.08899039930499805,"value_usd_approx":4628,"underlying_ticker":"VIG","underlying_market":"NYSE ARCA","instrument_type":"ETF tradicional","cedear_byma_symbol":"VIG","market_data_identity_provenance":"CURRENT_PORTFOLIO_CANONICAL_IDENTITY"},
-    {"cedear_ticker":"XLV","nominales":564,"weight":0.06506990303546098,"value_usd_approx":3384}
+    {"cedear_ticker":"ADP","nominales":37,"weight":0.03470681908375207,"value_usd_approx":1722},
+    {"cedear_ticker":"BRKB","nominales":136,"weight":0.06687411481991253,"value_usd_approx":3318},
+    {"cedear_ticker":"GOOGL","nominales":77,"weight":0.009714684551898082,"value_usd_approx":482},
+    {"cedear_ticker":"RTX","nominales":42,"weight":0.03456573445333031,"value_usd_approx":1715},
+    {"cedear_ticker":"SPGI","nominales":233,"weight":0.04569126530944596,"value_usd_approx":2267},
+    {"cedear_ticker":"VEA","nominales":278,"weight":0.042184304496105156,"value_usd_approx":2093},
+    {"cedear_ticker":"VIG","nominales":722,"weight":0.09327709565598408,"value_usd_approx":4628,"underlying_ticker":"VIG","underlying_market":"NYSE ARCA","instrument_type":"ETF tradicional","cedear_byma_symbol":"VIG","market_data_identity_provenance":"CURRENT_PORTFOLIO_CANONICAL_IDENTITY"},
+    {"cedear_ticker":"XLV","nominales":564,"weight":0.06820434133531765,"value_usd_approx":3384}
   ],
   "source": "Balanz statement screenshots, provided by user 2026-09-14 (Cedears (9) table + Liquidez proyectada Dolares)",
   "status": "CANONICAL_BASELINE",
   "policy_notes": [
     "Scope decision confirmed by user 2026-09-14: the separate 'Corporativos (6)' obligaciones negociables sleeve ($59,638 as of this snapshot -- IRCPO, PN41O, TTCDO, VSCVO, YFCJO, YM34O) is OUT OF SCOPE for this bot's mandate and the $20,000-additional goal. Not included in nav_total_usd/cash_usd here -- do not add it without an explicit, separate user decision to change scope.",
     "cash_usd matches the prior 20260904 baseline exactly ($30,006.61) -- confirmed via the user's own 'Liquidez proyectada / Dolares' screenshot, not assumed unchanged.",
-    "SPCX (SpaceX CEDEAR) is a new position, not previously tracked. Confirmed real and held via the user's own Balanz screenshot. Investigated 2026-09-14: launched on BYMA 2026-06-12 (same day as the underlying's Nasdaq IPO), issued by Comafi, ratio 50:1 per real-time news sources -- but absent from both of Comafi's live scraped catalogue pages (Programas-CEDEARs-2483 and CEDEAR-SHARES-2254) as of this date, same gap pattern as VIG before its mandate_exception fix. Included here in the portfolio baseline as a real, confirmed holding; still needs its own config/universe_inclusions.yml mandate-exception entry before the valuation/G4/risk pipeline can assess it -- until then it will show up as unassessed in existing_holdings_stress_metrics, same as VIG/VEA/BRKB did before their respective fixes this session."
+    "SPCX (SpaceX CEDEAR, 755 nominales per the same Balanz statement) is explicitly EXCLUDED from this baseline -- user confirmed 2026-09-14 it is out of scope for this bot's analysis, same as the Corporativos/ONs sleeve. Not listed in positions, not counted in nav_total_usd/nav_cedear_usd/cash_usd. Do not re-add without an explicit, separate user decision. (config/universe_inclusions.yml's SPCX row was added during the same investigation and then reverted per this same instruction -- see that file's own history/PROJECT_STATE.md for the full trail. The src/universe/symbol_map.py NaN-handling bug found while validating SPCX's inclusion is a real, general defect and was kept fixed regardless of this reversal -- it was never SPCX-specific.)"
   ]
 }

@@ -2,47 +2,18 @@ version: INC-20260907-003
 effective_date: "2026-09-07"
 reason_code: REQUIRED_CURRENT_PROGRAM_MISSING_OR_INCOMPLETE_IN_BASELINE
 rows:
-  # 2026-09-14: SPCX (SpaceX CEDEAR) is a new, real, currently-held position
-  # -- confirmed via the user's own Balanz portfolio screenshot (755
-  # nominales, part of the 20260914 baseline reconciliation). Investigated
-  # the same way as VIG before applying the mandate exception: BYMA's own
-  # newsroom announcement confirms the CEDEAR launched 2026-06-12 (the same
-  # day as the underlying's Nasdaq IPO, the largest IPO in history),
-  # issuer Comafi, ratio 50:1 (independently corroborated by a second real
-  # source, Rankia's investor guide) -- SpaceX (Space Exploration
-  # Technologies Corp.) is a direct US Nasdaq listing, not a foreign ADR.
-  # Despite three months of live trading, SPCX does not appear in either of
-  # Comafi's live catalogue pages this pipeline scrapes (Programas-CEDEARs-
-  # 2483, CEDEAR-SHARES-2254) as of this date -- checked directly, zero
-  # matches on ticker or issuer name in both. No ISIN/caja_code found from
-  # any source checked -- left unpopulated rather than guessed; the
-  # mandate_exception mechanism doesn't require them (eligible_for_research
-  # only needs mandate_exception=true, per reconcile_official_identity's
-  # OR-clause -- confirmed by reading that function directly). Same
-  # mechanism already used for IWDA and VIG.
-  - cedear_ticker: SPCX
-    underlying_ticker: SPCX
-    issuer_name: SPACE EXPLORATION TECHNOLOGIES CORP
-    instrument_type: Acción
-    ratio: 50
-    underlying_market: NASDAQ GS
-    local_issuer: Comafi
-    comafi_status: NOT_FOUND_IN_LIVE_COMAFI_CATALOGUE_20260914
-    caja_byma_status: PENDING_OFFICIAL_CONFIRMATION
-    eligible: true
-    exclusion_reason: null
-    mandate_exception: true
-    mandate_exception_reason: INCLUDED_BY_USER_DECISION
-    first_seen: "2026-09-14"
-    last_verified: "2026-09-14"
-    source_refs:
-      - https://www.byma.com.ar/newsroom/spacex-se-incorpora-a-los-cedears-disponibles-en-byma
-      - https://www.comafi.com.ar/Programas-CEDEARs-2483.note.aspx
-    source_dates:
-      - "2026-09-14"
-      - "2026-09-14"
-    universe_version: v2+INC-20260907-003
-    row_status: VALIDATED_MANDATE_EXCEPTION_OVERRIDE
+  # 2026-09-14: SPCX (SpaceX CEDEAR) was investigated here as a candidate
+  # mandate exception (same real-data diligence as VIG below -- confirmed
+  # via BYMA's own newsroom announcement, checked directly against both live
+  # Comafi catalogue pages, zero matches) after showing up in the user's
+  # Balanz statement. The user then explicitly confirmed SPCX is OUT OF
+  # SCOPE for this bot's analysis, same as the separate corporate-bond
+  # sleeve in that statement -- not a position this pipeline should track,
+  # value, or recommend around. Row deliberately NOT added here. See
+  # PROJECT_STATE.md for the full investigation trail; a real, general bug
+  # found in src/universe/symbol_map.py while validating this (unresolved
+  # BYMA symbols colliding into the literal string "NAN") was kept fixed
+  # regardless of this reversal -- it was never SPCX-specific.
 
   # 2026-09-14: VIG does not appear in Comafi's or Caja de Valores' current
   # live catalogues (verified directly against both -- searched by ticker,
