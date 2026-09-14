@@ -67,7 +67,7 @@ def _verified_security_mapping(row:pd.Series,policy:dict)->tuple[float,bool,str|
     direct=_num(row.get('adr_shares_per_depositary_receipt'))
     if direct is not None and direct>0 and bool(row.get('economic_unit_normalization_verified',False)):
         return direct,True,str(row.get('adr_ratio_source') or 'UPSTREAM_VERIFIED_METADATA'),str(row.get('foreign_security_type') or 'UPSTREAM_VERIFIED_SECURITY')
-    cfg=policy.get('identity',{}) or {}; adrs=cfg.get('verified_adr_ratios',{}) or {}; listings=cfg.get('verified_direct_foreign_listings',{}) or {}
+    cfg=policy.get('identity',{}) or {}; adrs=cfg.get('verified_adr_ratios',{}) or {}; listings=cfg.get('verified_direct_foreign_listings',{}) or {}; dual_class=cfg.get('verified_domestic_dual_class_ratios',{}) or {}
     for key in _security_keys(row):
         entry=adrs.get(key)
         if isinstance(entry,dict):
@@ -78,6 +78,19 @@ def _verified_security_mapping(row:pd.Series,policy:dict)->tuple[float,bool,str|
         if isinstance(entry,dict):
             ratio=_num(entry.get('ordinary_shares_per_us_traded_share'))
             if ratio is not None and ratio>0 and entry.get('source') and entry.get('security_type'):return ratio,True,str(entry['source']),str(entry['security_type'])
+    # Same shape of problem as an ADR, but domestic: some multi-class US
+    # issuers (e.g. Berkshire Hathaway) report per-share fundamentals
+    # (EPS, PE, book value) against their primary/reference share class
+    # regardless of which class's price is being queried. verified_adr_ratios
+    # assumes a foreign "ordinary share" as the reference unit and gets
+    # security_type='ADS_ADR', which would mislabel a purely domestic
+    # dual-class stock -- this is a distinct, explicitly-sourced mechanism
+    # instead of overloading that one.
+    for key in _security_keys(row):
+        entry=dual_class.get(key)
+        if isinstance(entry,dict):
+            ratio=_num(entry.get('reference_class_shares_per_traded_share'))
+            if ratio is not None and ratio>0 and entry.get('source'):return ratio,True,str(entry['source']),'DOMESTIC_DUAL_CLASS'
     return 1.0,False,None,None
 
 def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,Any]]:
@@ -97,7 +110,9 @@ def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,An
         blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED'); flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
     if adr_verified and security_type=='ADS_ADR' and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
     if adr_verified and security_type=='ADS_ADR' and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
-    if adr_verified and security_type not in (None,'ADS_ADR'):
+    if adr_verified and security_type=='DOMESTIC_DUAL_CLASS':
+        flags.append('VERIFIED_DOMESTIC_DUAL_CLASS_RATIO_APPLIED')
+    elif adr_verified and security_type not in (None,'ADS_ADR'):
         flags.append('VERIFIED_DIRECT_FOREIGN_LISTING_MAPPING_APPLIED')
         if adr==1.0:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
     if identity_method=='PB':flags.append('ECONOMIC_IDENTITY_PB_FALLBACK_APPLIED')

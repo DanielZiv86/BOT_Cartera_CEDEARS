@@ -3,7 +3,7 @@ import pytest
 from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
- 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}}},
+ 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
@@ -92,6 +92,38 @@ def test_sector_override_matches_on_underlying_ticker_not_just_cedear_ticker():
  out,_=validate_scenarios(pd.DataFrame([_row('BRKB',507,650,600,450,31,14.58,.08,.7,.3,sector='',underlying_ticker='BRK/B')]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='FINANCIALS'
  assert 'SECTOR_CLASSIFICATION_UNVERIFIED' not in r['scenario_review_blockers']
+
+def test_brkb_domestic_dual_class_ratio_reconciles_real_class_a_scale_fundamentals():
+ # Real BRKB data (found 2026-09-14, broad valuation output): Finnhub's
+ # /stock/metric reports EPS/PE/book-value-per-share at Class A economic
+ # scale (fundamental_eps_normalized=46570.2364, fundamental_pe_normalized=
+ # 14.6701, fundamental_book_value_per_share=497171.8642) even when queried
+ # for BRK.B, while current_price ($510.369995) is genuinely BRK.B market
+ # price -- implied Class A fair value 46570.2364*14.6701≈$683,262, a ~1339x
+ # mismatch against current_price. Without the verified 1500:1 conversion
+ # ratio this fails ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH and BRKB can never
+ # get a Bear/Base/Bull case, even though it's a real, fully-covered holding.
+ row=_row('BRKB',510.369995,650,560,460,46570.2364,14.6701,.05,.7,.3,sector='',underlying_ticker='BRK/B',
+          fundamental_book_value_per_share=497171.8642,fundamental_price_to_book=1.5134,fundamental_roe=9.33)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['identity_security_type']=='DOMESTIC_DUAL_CLASS'
+ assert r['identity_adr_ratio_applied']==pytest.approx(0.0006666667)
+ assert r['identity_adr_ratio_source']=='BERKSHIRE_OFFICIAL'
+ assert r['identity_implied_to_market_ratio']==pytest.approx(0.8924114736463848,rel=1e-6)
+ assert 'VERIFIED_DOMESTIC_DUAL_CLASS_RATIO_APPLIED' in r['identity_flags']
+ assert 'VERIFIED_DIRECT_FOREIGN_LISTING_MAPPING_APPLIED' not in r['identity_flags']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+
+def test_unverified_dual_class_ticker_still_fails_closed_on_unit_mismatch():
+ # A different (hypothetical) dual-class-shaped mismatch with no config
+ # entry must still fail closed -- the mechanism only reconciles tickers
+ # with an explicit, sourced ratio, never a guessed one.
+ row=_row('DUALX',500,650,560,460,45000,15,.05,sector='Technology')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert not r['scenario_validated']
+ assert 'ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH' in r['scenario_review_blockers']
+ assert r['identity_security_type'] is None
 
 def test_unknown_sector_fails_closed_never_defaults_corporate():
  out,m=validate_scenarios(pd.DataFrame([_row('AAA',100,130,110,80,5,20,.10,sector='')]),POLICY); r=out.iloc[0]

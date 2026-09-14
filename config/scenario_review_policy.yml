@@ -49,6 +49,30 @@ identity:
       ordinary_shares_per_us_traded_share: 1.0
       security_type: NYSE_LISTED_CLASS_A_COMMON_SHARE
       source: PAGSEGURO_SEC_20F_DESCRIPTION_OF_SECURITIES_1_TO_1
+  # Same shape of problem as an ADR, but domestic: Finnhub's /stock/metric
+  # reports BRK.B's EPS/PE/book-value-per-share at Class A economic scale
+  # (BRK.A EPS is on the order of tens of thousands of dollars/share) even
+  # when queried for the BRK.B ticker, while current_price and the price
+  # target are genuinely BRK.B market price -- confirmed 2026-09-14 against
+  # real broad-valuation output (fundamental_eps_normalized=46,570.24,
+  # fundamental_pe_normalized=14.6701, current_price=$510.37; implied Class A
+  # fair value 46570.24*14.6701≈$683,262, ~1339x current_price -- the
+  # ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH driver). Berkshire's Class A-to-B
+  # conversion ratio (1 Class A share = 1500 Class B shares, unchanged since
+  # the 2010 split) is public and SEC-documented, not a guessed multiplier --
+  # see Berkshire's 10-K, "Description of Registrant's Securities". Applying
+  # it as reference_class_shares_per_traded_share=1/1500 makes the identity
+  # check's implied price ≈$455.5 vs. the real $510.37 (ratio ≈0.89, well
+  # inside the 0.55-1.80 band), and the book-value/price-to-book check
+  # (bv=$497,171.86, pb=1.5134) implies ≈$501.6 (ratio ≈0.98) -- both
+  # independently confirm the same 1500x scale, not a coincidence.
+  verified_domestic_dual_class_ratios:
+    BRKB:
+      reference_class_shares_per_traded_share: 0.0006666667
+      source: BERKSHIRE_HATHAWAY_SEC_10K_CLASS_B_1500_TO_1_CONVERSION_RATIO
+    BRK/B:
+      reference_class_shares_per_traded_share: 0.0006666667
+      source: BERKSHIRE_HATHAWAY_SEC_10K_CLASS_B_1500_TO_1_CONVERSION_RATIO
 
 sector_classification:
   fail_closed_when_unverified: true
