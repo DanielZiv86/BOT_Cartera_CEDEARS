@@ -3,9 +3,10 @@ methodology_version: VALUE-SCREEN-1.0
 # Fase 2 production policy. Feeds src/orchestration/build_value_research_screening.py
 # (weekly_screening.yml): equities are selected for the Research Top-N by
 # value_score (fundamentals), not by the technical screening_score, which is
-# used only as a binary entry-timing gate. Cut over after the value-first
-# shadow (src/orchestration/build_value_research_shadow.py, still available
-# as an isolated audit tool) showed the prior technical-only selection
+# used only as a binary entry-timing gate. Cut over after a value-first
+# shadow comparison (build_value_research_shadow.py, retired 2026-09-14 once
+# production itself became value-first -- see PROJECT_STATE.md for the
+# historical evidence) showed the prior technical-only selection
 # structurally excluded every ticker that went on to pass G4.
 
 components:

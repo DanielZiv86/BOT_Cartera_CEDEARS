@@ -4,8 +4,9 @@ name: Build Research MVP Screening
 # Research picks the Top-N -- equities are selected by value_score
 # (fundamentals), with the existing technical screening_score used only as a
 # binary entry-timing gate. ETFs/non-equity keep their own reserved,
-# technical-only ranked slots. See the (now-historical) shadow comparison in
-# value_research_shadow.yml for the evidence behind this cutover.
+# technical-only ranked slots. The shadow comparison that motivated this
+# cutover (value_research_shadow.yml, retired 2026-09-14 once production
+# itself became value-first) is documented in PROJECT_STATE.md.
 
 on:
   workflow_dispatch:
