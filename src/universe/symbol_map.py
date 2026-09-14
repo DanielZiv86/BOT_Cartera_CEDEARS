@@ -29,7 +29,15 @@ def normalize_provider_symbol(underlying_ticker: str, provider: str, aliases: di
 def build_symbol_map(eligible_universe: pd.DataFrame, aliases: dict[str, Any], providers: tuple[str, ...] = ("yahoo", "stooq", "iol", "data912")) -> pd.DataFrame:
     records=[]
     for row in eligible_universe.to_dict(orient="records"):
-        local = str(row.get("cedear_byma_symbol") or row["cedear_ticker"]).strip().upper()
+        # `... or row["cedear_ticker"]` alone is wrong here: an unresolved BYMA
+        # symbol is a pandas float NaN, which is truthy in Python, so `or` never
+        # falls through to the real ticker -- every such row collapses to the
+        # literal string "NAN". Silent for years because VIG was the only
+        # mandate-exception ticker with no resolved BYMA symbol; adding a second
+        # one (SPCX, 2026-09-14) produced a real "duplicate cedear_ticker" crash
+        # in augment_symbol_map_with_current_holdings, which is what surfaced this.
+        raw_local = row.get("cedear_byma_symbol")
+        local = str(raw_local).strip().upper() if pd.notna(raw_local) and str(raw_local).strip() else str(row["cedear_ticker"]).strip().upper()
         base={"cedear_ticker": local,"legacy_cedear_ticker":row.get("legacy_cedear_ticker",row["cedear_ticker"]),"cedear_byma_symbol":local,"canonical_underlying":row["underlying_ticker"],"underlying_market":row.get("underlying_market"),"instrument_type":row.get("instrument_type"),"ratio":row.get("ratio"),"mandate_exception":row.get("mandate_exception",False),"byma_tradable":row.get("byma_tradable",True),"mapping_status":"RESOLVED","mapping_version":aliases.get("mapping_version","1.0")}
         for provider in providers:
             # Local providers MUST receive the CEDEAR's BYMA symbol. Foreign-market

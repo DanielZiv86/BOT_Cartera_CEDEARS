@@ -28,7 +28,7 @@ jobs:
           gh run download "$H" --name underlying-history-layer --dir data/upstream_history
           gh run download "$Q" --name risk-correlation-engine --dir data/upstream_risk
       - name: Build Portfolio State Engine
-        run: python -m src.orchestration.build_portfolio_state --portfolio-state data/input/portfolio_state_baseline_20260904.json --history data/upstream_history/underlying_history.parquet --correlations data/upstream_risk/correlation_matrix_long.parquet --classification config/portfolio_classification.yml --output-dir data/canonical/portfolio
+        run: python -m src.orchestration.build_portfolio_state --portfolio-state data/input/portfolio_state_baseline_20260914.json --history data/upstream_history/underlying_history.parquet --correlations data/upstream_risk/correlation_matrix_long.parquet --classification config/portfolio_classification.yml --output-dir data/canonical/portfolio
       - name: Enforce quantitative Portfolio Fit contract
         run: |
           python - <<'PY'
