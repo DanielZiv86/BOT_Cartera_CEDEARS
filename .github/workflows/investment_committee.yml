@@ -52,8 +52,13 @@ jobs:
           PORTFOLIO_RUN_ID=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['portfolio_run_id'])")
           mkdir -p data/upstream_portfolio_state
           gh run download "$PORTFOLIO_RUN_ID" --name portfolio-state-engine --dir data/upstream_portfolio_state
+      - name: Download exact broad-universe valuation for existing-holdings stress
+        run: |
+          RESEARCH_RUN_ID=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['research_run_id'])")
+          mkdir -p data/upstream_broad_valuation
+          gh run download "$RESEARCH_RUN_ID" --name canonical-broad-valuation-scenarios --dir data/upstream_broad_valuation
       - name: Build Committee decision and persist Shadow Book
-        run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee --portfolio-state-manifest data/upstream_portfolio_state/portfolio_state_manifest.json --financial-goal config/financial_goal.yml
+        run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee --portfolio-state-manifest data/upstream_portfolio_state/portfolio_state_manifest.json --financial-goal config/financial_goal.yml --positions data/upstream_portfolio_state/portfolio_positions.parquet --broad-valuation data/upstream_broad_valuation/valuation_scenarios.parquet --scenario-policy config/scenario_review_policy.yml
       - name: Final E2E certification contract
         run: |
           python - <<'PY'
@@ -97,17 +102,35 @@ jobs:
           assert bool(g.get('g4_accounting_complete', evaluated + blocked == ticker_count)),g
           assert g.get('ranking_status') in {'COMPLETE_ACTIONABLE','COMPLETE_WITH_REVIEW_FLAGS','COMPLETE_WITH_DATA_GAPS'},g
           if blocked:
+              # A blocked ticker is a per-ticker data gap (e.g. missing a
+              # verified ADR ratio), excluded from G4 evaluation on its own.
+              # It no longer vetoes the WHOLE committee decision when other,
+              # cleanly-evaluated candidates pass G4 and Risk elsewhere --
+              # reviewed and fixed 2026-09-12 (see PROJECT_STATE.md); the old
+              # behavior double-counted an isolated gap as risk against
+              # unrelated tickers. The gap stays visible either way via
+              # ranking_status and secondary_considerations.
               assert g.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',g
-              assert g.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',g
-              assert c['decision'] == 'HOLD_CASH_NO_ACTION',c
-              if passes==0 and evaluated>0 and fails==evaluated:
-                  assert c.get('rationale') == 'NO_CANDIDATE_BEATS_CASH_HURDLE',c
-                  assert 'SCENARIO_DATA_GAPS_FAIL_CLOSED' in c.get('secondary_considerations',[]),c
+              assert 'SCENARIO_DATA_GAPS_FAIL_CLOSED' in c.get('secondary_considerations',[]),c
+              if g.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS':
+                  assert c['decision'] == 'HOLD_CASH_NO_ACTION',c
+                  if passes==0 and evaluated>0 and fails==evaluated:
+                      assert c.get('rationale') == 'NO_CANDIDATE_BEATS_CASH_HURDLE',c
+                  else:
+                      assert c.get('rationale') in ('NO_TRADE_READY_CANDIDATE','CASH_OPTIMAL_BY_MODEL'),c
               else:
-                  assert c.get('rationale') == 'SCENARIO_DATA_GAPS_FAIL_CLOSED',c
+                  assert g.get('deployment_decision') == 'ALLOW_NEW_DEPLOYMENT',g
+                  assert c['decision'] in ('CANDIDATES_REQUIRE_EXECUTION_GATE','HOLD_CASH_NO_ACTION'),c
+                  if c['decision'] == 'CANDIDATES_REQUIRE_EXECUTION_GATE':
+                      assert c.get('rationale') == 'G4_PASS_RISK_PASS',c
           assert r['risk_status']=='PASS',r
           assert r['risk_veto']=='NO',r
           assert c['fabricated_trade_count']==0,c
+          ehs=c.get('existing_holdings_stress_metrics'); assert ehs is not None,c
+          assert ehs['existing_holdings_assessed_weight'] >= 0,ehs
+          assert ehs['existing_holdings_unassessed_weight'] >= 0,ehs
+          if c['decision']=='CANDIDATES_REQUIRE_EXECUTION_GATE':
+              assert c['allocation_metrics']['existing_holdings_stress_contribution_nav'] >= 0,c
           assert s['e2e_run_id']==l['e2e_run_id'],(s,l)
           assert s['committee_run_id']==l['committee_run_id'],(s,l)
           assert s['order_count']==len(s.get('orders',[])),s

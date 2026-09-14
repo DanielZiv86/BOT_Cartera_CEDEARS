@@ -39,9 +39,18 @@ def _certified_review_metrics(reviewed, scenario_methodology_version='SCENARIO-2
 def _govern(m):
     x=dict(m); blocked=int(x.get('blocked_count',0) or 0); evaluated=int(x.get('evaluated_count',0) or 0); passes=int(x.get('pass_count',0) or 0); clean=int(x.get('clean_g4_pass_count',passes) or 0); review=int(x.get('extreme_target_review_required_count',0) or 0); total=int(x.get('ticker_count',0) or 0)
     accounted=(total==30 and evaluated+blocked==30)
+    # blocked>0 (a per-ticker data gap, e.g. a missing verified ADR ratio or a
+    # currency-normalization bug on ONE name -- see PROJECT_STATE.md) already
+    # excludes that ticker from evaluation on its own. It used to ALSO veto
+    # deployment into every OTHER, cleanly-evaluated G4_PASS candidate --
+    # reviewed and rejected 2026-09-12 as an isolated ticker's data gap
+    # double-counting as risk against unrelated names. clean>0 is therefore
+    # checked first; ranking_status still reports COMPLETE_WITH_DATA_GAPS
+    # whenever blocked>0 so the gap stays visible even when deployment
+    # proceeds around it.
     if total==0 or not accounted: x.update(deployment_decision='RESEARCH_BLOCKED',ranking_status='PARTIAL_NOT_ACTIONABLE')
+    elif clean>0: x.update(deployment_decision='ALLOW_NEW_DEPLOYMENT',ranking_status='COMPLETE_WITH_DATA_GAPS' if blocked else ('COMPLETE_WITH_REVIEW_FLAGS' if review else 'COMPLETE_ACTIONABLE'))
     elif blocked>0: x.update(deployment_decision='NO_NEW_DEPLOYMENT_DATA_GAPS',ranking_status='COMPLETE_WITH_DATA_GAPS')
-    elif clean>0: x.update(deployment_decision='ALLOW_NEW_DEPLOYMENT',ranking_status='COMPLETE_WITH_REVIEW_FLAGS' if review else 'COMPLETE_ACTIONABLE')
     elif passes>0 and review>0: x.update(deployment_decision='NO_NEW_DEPLOYMENT_PENDING_TARGET_REVIEW',ranking_status='COMPLETE_REVIEW_REQUIRED')
     else: x.update(deployment_decision='NO_NEW_DEPLOYMENT',ranking_status='COMPLETE_ACTIONABLE')
     x['accounted_count']=evaluated+blocked; x['g4_accounting_complete']=accounted

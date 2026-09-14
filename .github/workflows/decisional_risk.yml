@@ -59,7 +59,12 @@ jobs:
           assert bool(m.get('g4_accounting_complete', evaluated + blocked == ticker_count)),m
           if blocked:
               assert m.get('ranking_status') == 'COMPLETE_WITH_DATA_GAPS',m
-              assert m.get('deployment_decision') == 'NO_NEW_DEPLOYMENT_DATA_GAPS',m
+              # A blocked ticker is a per-ticker data gap, excluded from
+              # evaluation on its own -- it no longer vetoes deployment into
+              # OTHER, cleanly-evaluated G4_PASS candidates (2026-09-12 fix,
+              # see PROJECT_STATE.md). Either outcome is fail-closed-correct
+              # depending on whether any clean candidates exist.
+              assert m.get('deployment_decision') in ('ALLOW_NEW_DEPLOYMENT', 'NO_NEW_DEPLOYMENT_DATA_GAPS'),m
           PY
       - name: Download exact portfolio pinned by G4 lineage
         run: |

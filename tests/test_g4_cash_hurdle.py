@@ -179,6 +179,37 @@ def test_extreme_target_pass_is_flagged_and_not_clean_actionable():
     assert metrics["clean_g4_pass_count"] == 0
 
 
+def test_clean_pass_candidates_allow_deployment_despite_unrelated_blocked_ticker():
+    # 2026-09-12 fix: an unrelated BLOCKED_BY_DATA ticker (a per-ticker data
+    # gap) used to veto deployment for the WHOLE Top-30, even when other,
+    # cleanly-evaluated candidates passed G4. It should now only keep that
+    # one ticker out of consideration; ranking_status still surfaces the
+    # gap, but deployment_decision follows the clean candidates.
+    governed = _apply_global_governance({
+        "ticker_count": 30,
+        "evaluated_count": 29,
+        "blocked_count": 1,
+        "pass_count": 3,
+        "clean_g4_pass_count": 3,
+        "extreme_target_review_required_count": 0,
+    })
+    assert governed["deployment_decision"] == "ALLOW_NEW_DEPLOYMENT"
+    assert governed["ranking_status"] == "COMPLETE_WITH_DATA_GAPS"
+
+
+def test_no_clean_pass_candidates_still_holds_on_blocked_data():
+    governed = _apply_global_governance({
+        "ticker_count": 30,
+        "evaluated_count": 29,
+        "blocked_count": 1,
+        "pass_count": 0,
+        "clean_g4_pass_count": 0,
+        "extreme_target_review_required_count": 0,
+    })
+    assert governed["deployment_decision"] == "NO_NEW_DEPLOYMENT_DATA_GAPS"
+    assert governed["ranking_status"] == "COMPLETE_WITH_DATA_GAPS"
+
+
 def test_execution_gate_accepts_current_canonical_local_market_statuses():
     economic = pd.DataFrame([{"cedear_ticker": "CIBR", "g4_status": "G4_FAIL_DOWNSIDE"}])
     local = pd.DataFrame([{

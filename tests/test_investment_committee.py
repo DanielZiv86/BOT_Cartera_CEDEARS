@@ -141,3 +141,106 @@ def test_pass_candidates_populate_sized_trades_and_pending_execution_status(tmp_
     assert goal["goal_new_deployment_weighted_expected_return"] is not None
     assert goal["goal_new_deployment_weighted_expected_return"] > goal["goal_required_annual_return"]
     assert goal["goal_pace_status"] == "NEW_DEPLOYMENT_MEETS_OR_EXCEEDS_PACE"
+
+
+def test_blocked_by_data_ticker_no_longer_vetoes_clean_pass_candidates_elsewhere(tmp_path, monkeypatch):
+    # 2026-09-12 fix: a single BLOCKED_BY_DATA ticker in the Top-30 (a
+    # per-ticker data gap) used to force HOLD_CASH_NO_ACTION for the whole
+    # committee, even when other, cleanly-evaluated tickers passed G4 and
+    # Risk. It should now only keep that one ticker out of consideration
+    # (which it already never reaches G4_PASS on its own) while still
+    # surfacing SCENARIO_DATA_GAPS_FAIL_CLOSED as a secondary consideration.
+    rows = [_g4_row(f"T{i}") for i in range(28)]
+    rows.append(_g4_row("BEST", g4_status="G4_PASS", risk_adjusted_er=0.15, bear_return_net=-0.10, fx_stress_return_net=-0.08))
+    g4_dir, risk_dir, out_dir = _setup_common(
+        tmp_path,
+        g4_manifest_overrides={
+            "pass_count": 1, "fail_count": 28, "blocked_count": 1, "evaluated_count": 29,
+            "deployment_decision": "ALLOW_NEW_DEPLOYMENT",
+        },
+        g4_rows=rows,
+    )
+    manifest_path, goal_path = _setup_goal_inputs(tmp_path)
+    monkeypatch.setattr("sys.argv", [
+        "build_investment_committee",
+        "--g4-dir", str(g4_dir), "--risk-dir", str(risk_dir),
+        "--output-dir", str(out_dir), "--committee-run-id", "1001",
+        "--portfolio-state-manifest", str(manifest_path), "--financial-goal", str(goal_path),
+        "--as-of-date", "2024-01-01",
+    ])
+    main()
+    decision = json.loads((out_dir / "committee_decision.json").read_text())
+    assert decision["decision"] == "CANDIDATES_REQUIRE_EXECUTION_GATE"
+    assert decision["rationale"] == "G4_PASS_RISK_PASS"
+    assert decision["secondary_considerations"] == ["SCENARIO_DATA_GAPS_FAIL_CLOSED"]
+    assert decision["g4_blocked_count"] == 1
+    assert len(decision["new_trades"]) == 1
+
+
+def test_all_candidates_blocked_by_data_still_holds_cash(tmp_path, monkeypatch):
+    # The one case that legitimately warrants a systemic halt: nothing in
+    # the Top-30 could even be evaluated (a pipeline-wide failure, not an
+    # isolated per-ticker gap).
+    g4_dir, risk_dir, out_dir = _setup_common(
+        tmp_path,
+        g4_manifest_overrides={
+            "pass_count": 0, "fail_count": 0, "blocked_count": 30, "evaluated_count": 0,
+            "deployment_decision": "NO_NEW_DEPLOYMENT",
+        },
+        g4_rows=[],
+    )
+    manifest_path, goal_path = _setup_goal_inputs(tmp_path)
+    monkeypatch.setattr("sys.argv", [
+        "build_investment_committee",
+        "--g4-dir", str(g4_dir), "--risk-dir", str(risk_dir),
+        "--output-dir", str(out_dir), "--committee-run-id", "1002",
+        "--portfolio-state-manifest", str(manifest_path), "--financial-goal", str(goal_path),
+        "--as-of-date", "2024-01-01",
+    ])
+    main()
+    decision = json.loads((out_dir / "committee_decision.json").read_text())
+    assert decision["decision"] == "HOLD_CASH_NO_ACTION"
+    assert decision["rationale"] == "ALL_CANDIDATES_BLOCKED_BY_DATA"
+
+
+def test_existing_holdings_stress_reduces_new_trade_sizing_when_wired(tmp_path, monkeypatch):
+    import yaml as _yaml
+    from tests.test_existing_holdings_stress import POLICY as SCENARIO_POLICY, _row as _scenario_row
+
+    rows = [_g4_row(f"T{i}") for i in range(29)]
+    rows.append(_g4_row("BEST", g4_status="G4_PASS", risk_adjusted_er=0.15, bear_return_net=-0.10, fx_stress_return_net=-0.08))
+    g4_dir, risk_dir, out_dir = _setup_common(
+        tmp_path,
+        g4_manifest_overrides={"pass_count": 1, "fail_count": 29, "deployment_decision": "ALLOW_NEW_DEPLOYMENT"},
+        g4_rows=rows,
+    )
+    manifest_path, goal_path = _setup_goal_inputs(tmp_path)
+
+    broad = pd.DataFrame([_scenario_row("PBI", 17.17, 23.1, 19.63, 12, .8362, 16.2674, .12, .60, .8, sector="Technology")])
+    broad_path = tmp_path / "broad_valuation.parquet"
+    broad.to_parquet(broad_path, index=False)
+    scenario_policy_path = tmp_path / "scenario_review_policy.yml"
+    scenario_policy_path.write_text(_yaml.safe_dump(SCENARIO_POLICY), encoding="utf-8")
+    positions = pd.DataFrame([{"cedear_ticker": "PBI", "weight": 0.60}])
+    positions_path = tmp_path / "portfolio_positions.parquet"
+    positions.to_parquet(positions_path, index=False)
+
+    monkeypatch.setattr("sys.argv", [
+        "build_investment_committee",
+        "--g4-dir", str(g4_dir), "--risk-dir", str(risk_dir),
+        "--output-dir", str(out_dir), "--committee-run-id", "1003",
+        "--portfolio-state-manifest", str(manifest_path), "--financial-goal", str(goal_path),
+        "--as-of-date", "2024-01-01",
+        "--positions", str(positions_path), "--broad-valuation", str(broad_path),
+        "--scenario-policy", str(scenario_policy_path),
+    ])
+    main()
+    decision = json.loads((out_dir / "committee_decision.json").read_text())
+    assert decision["existing_holdings_stress_metrics"] is not None
+    assert decision["existing_holdings_stress_metrics"]["existing_holdings_assessed_weight"] == pytest.approx(0.60)
+    assert decision["allocation_metrics"]["existing_holdings_stress_contribution_nav"] > 0.0
+    # Same BEST candidate as test_pass_candidates_populate_sized_trades_and_pending_execution_status,
+    # but now a large, heavily-weighted existing holding's own stress eats into
+    # the shared portfolio stress budget, so BEST gets sized smaller than the
+    # unconstrained 0.20 it would otherwise receive.
+    assert decision["new_trades"][0]["target_weight"] < 0.20
