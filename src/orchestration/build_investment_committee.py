@@ -28,7 +28,7 @@ def _load_allocation_policy(path: str) -> AllocationPolicy:
     )
 
 
-def _compute_existing_holdings_stress(positions_path: str, broad_valuation_path: str, scenario_policy_path: str) -> tuple[float, dict]:
+def _compute_existing_holdings_stress(positions_path: str, broad_valuation_path: str, scenario_policy_path: str, universe_path: str | None = None) -> tuple[float, dict]:
     """Currently-held positions' own worst-case stress contribution to the
     whole-portfolio stress budget (see AllocationPolicy.portfolio_stress_
     budget_nav and build_portfolio_allocation's existing_holdings_stress_nav).
@@ -43,8 +43,21 @@ def _compute_existing_holdings_stress(positions_path: str, broad_valuation_path:
     position (bought at a different time, at a different entry) doesn't have
     in this context. This is a deliberate simplification, not an oversight.
 
-    Held tickers whose scenario can't currently be validated (BRKB's dual-
-    class EPS bug, VIG's absence from the canonical universe -- see
+    KNOWN GAP (found 2026-09-14, while validating the sector-taxonomy
+    expansion against real data): build_valuation_scenarios.py's broad-
+    universe output does NOT carry forward industry_sector_official (or any
+    other universe metadata) -- valuation_scenarios.yml's own Deep Scenario
+    Review step re-merges it back in from the canonical universe for the
+    Top-30 before calling validate_scenarios, but this function historically
+    didn't, so sector classification silently failed for every held ticker
+    outside the Top-30 without an explicit sector_overrides entry (confirmed:
+    without the merge, 190/199 real equity rows fail
+    SECTOR_CLASSIFICATION_UNVERIFIED; with it, only 12 do). universe_path
+    (optional, for backward compatibility with callers/tests that don't have
+    it) enables the same merge here.
+
+    Held tickers whose scenario still can't be validated after that (BRKB's
+    dual-class EPS bug, VIG's absence from the canonical universe -- see
     PROJECT_STATE.md's open items) are excluded from the sum, never defaulted
     to zero risk: their weight is reported in unassessed_weight so the gap
     stays visible instead of silently understating true portfolio stress.
@@ -55,6 +68,12 @@ def _compute_existing_holdings_stress(positions_path: str, broad_valuation_path:
     held['cedear_ticker'] = held['cedear_ticker'].astype(str).str.upper()
 
     broad = pd.read_parquet(broad_valuation_path)
+    if universe_path:
+        universe = pd.read_parquet(universe_path)
+        key = 'cedear_ticker'
+        missing = [c for c in universe.columns if c != key and c not in broad.columns]
+        if missing:
+            broad = broad.merge(universe[[key] + missing], on=key, how='left', validate='one_to_one')
     policy = yaml.safe_load(Path(scenario_policy_path).read_text(encoding='utf-8')) or {}
     reviewed, _ = validate_scenarios(broad, policy)
     reviewed['cedear_ticker'] = reviewed['cedear_ticker'].astype(str).str.upper()
@@ -144,7 +163,7 @@ def _evaluate_goal_tracking(portfolio_state_manifest_path: str, financial_goal_p
 
 
 def main()->None:
-    p=argparse.ArgumentParser(description='Investment Committee: exact-lineage final decision and shadow-book persistence');p.add_argument('--g4-dir',required=True);p.add_argument('--risk-dir',required=True);p.add_argument('--output-dir',default='data/canonical/committee');p.add_argument('--committee-run-id',required=True,type=int);p.add_argument('--allocation-policy',default='config/portfolio_allocation_policy.yml');p.add_argument('--portfolio-state-manifest',required=True);p.add_argument('--financial-goal',default='config/financial_goal.yml');p.add_argument('--as-of-date',default=None,help='YYYY-MM-DD override for goal pace evaluation; defaults to today (UTC)');p.add_argument('--positions',default=None,help='portfolio_positions.parquet (cedear_ticker, weight); with --broad-valuation, enables existing_holdings_stress_nav; omitted, existing holdings contribute 0 to the portfolio stress budget (previous behavior)');p.add_argument('--broad-valuation',default=None,help='Deep Scenario Review broad-universe valuation parquet (every held ticker, not just this week Top-30)');p.add_argument('--scenario-policy',default='config/scenario_review_policy.yml');a=p.parse_args();g4=Path(a.g4_dir);risk=Path(a.risk_dir);out=Path(a.output_dir);out.mkdir(parents=True,exist_ok=True)
+    p=argparse.ArgumentParser(description='Investment Committee: exact-lineage final decision and shadow-book persistence');p.add_argument('--g4-dir',required=True);p.add_argument('--risk-dir',required=True);p.add_argument('--output-dir',default='data/canonical/committee');p.add_argument('--committee-run-id',required=True,type=int);p.add_argument('--allocation-policy',default='config/portfolio_allocation_policy.yml');p.add_argument('--portfolio-state-manifest',required=True);p.add_argument('--financial-goal',default='config/financial_goal.yml');p.add_argument('--as-of-date',default=None,help='YYYY-MM-DD override for goal pace evaluation; defaults to today (UTC)');p.add_argument('--positions',default=None,help='portfolio_positions.parquet (cedear_ticker, weight); with --broad-valuation, enables existing_holdings_stress_nav; omitted, existing holdings contribute 0 to the portfolio stress budget (previous behavior)');p.add_argument('--broad-valuation',default=None,help='Deep Scenario Review broad-universe valuation parquet (every held ticker, not just this week Top-30)');p.add_argument('--scenario-policy',default='config/scenario_review_policy.yml');p.add_argument('--universe',default=None,help='cedear_universe_master.parquet; re-merges industry_sector_official (dropped by the broad valuation step) so sector classification works for held tickers outside the Top-30, same as valuation_scenarios.yml already does for the Top-30 itself');a=p.parse_args();g4=Path(a.g4_dir);risk=Path(a.risk_dir);out=Path(a.output_dir);out.mkdir(parents=True,exist_ok=True)
     gl=json.loads((g4/'e2e_lineage.json').read_text());rl=json.loads((risk/'e2e_lineage.json').read_text());gm=json.loads((g4/'g4_manifest.json').read_text());rr=json.loads((risk/'decisional_risk.json').read_text());keys=['e2e_run_id','research_run_id','universe_run_id','valuation_run_id','local_market_run_id','portfolio_run_id','g4_run_id']
     assert all(gl.get(k)==rl.get(k) for k in keys),'Risk and G4 lineage mismatch';assert rl.get('decisional_risk_run_id'),'Missing decisional Risk run id';assert gm.get('ticker_count')==30 and int(gm.get('evaluated_count',0))+int(gm.get('blocked_count',0))==30,gm;assert gm.get('g4_accounting_complete') is True,gm;assert rr.get('risk_status')=='PASS',rr
     passes=int(gm.get('pass_count',0) or 0);fails=int(gm.get('fail_count',0) or 0);blocked=int(gm.get('blocked_count',0) or 0);evaluated=int(gm.get('evaluated_count',0) or 0)
@@ -173,7 +192,7 @@ def main()->None:
     existing_holdings_stress_nav=0.0
     existing_holdings_stress_metrics: dict | None = None
     if a.positions and a.broad_valuation:
-        existing_holdings_stress_nav,existing_holdings_stress_metrics=_compute_existing_holdings_stress(a.positions,a.broad_valuation,a.scenario_policy)
+        existing_holdings_stress_nav,existing_holdings_stress_metrics=_compute_existing_holdings_stress(a.positions,a.broad_valuation,a.scenario_policy,universe_path=a.universe)
 
     new_trades: list[dict] = []
     allocation_metrics: dict | None = None

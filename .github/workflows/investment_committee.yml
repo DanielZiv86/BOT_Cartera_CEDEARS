@@ -55,10 +55,12 @@ jobs:
       - name: Download exact broad-universe valuation for existing-holdings stress
         run: |
           RESEARCH_RUN_ID=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['research_run_id'])")
-          mkdir -p data/upstream_broad_valuation
+          UNIVERSE_RUN_ID=$(python -c "import json;print(json.load(open('data/upstream_g4/e2e_lineage.json'))['universe_run_id'])")
+          mkdir -p data/upstream_broad_valuation data/upstream_universe
           gh run download "$RESEARCH_RUN_ID" --name canonical-broad-valuation-scenarios --dir data/upstream_broad_valuation
+          gh run download "$UNIVERSE_RUN_ID" --name canonical-universe --dir data/upstream_universe
       - name: Build Committee decision and persist Shadow Book
-        run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee --portfolio-state-manifest data/upstream_portfolio_state/portfolio_state_manifest.json --financial-goal config/financial_goal.yml --positions data/upstream_portfolio_state/portfolio_positions.parquet --broad-valuation data/upstream_broad_valuation/valuation_scenarios.parquet --scenario-policy config/scenario_review_policy.yml
+        run: python -m src.orchestration.build_investment_committee --g4-dir data/upstream_g4 --risk-dir data/upstream_risk --committee-run-id ${{ github.run_id }} --output-dir data/canonical/committee --portfolio-state-manifest data/upstream_portfolio_state/portfolio_state_manifest.json --financial-goal config/financial_goal.yml --positions data/upstream_portfolio_state/portfolio_positions.parquet --broad-valuation data/upstream_broad_valuation/valuation_scenarios.parquet --scenario-policy config/scenario_review_policy.yml --universe data/upstream_universe/cedear_universe_master.parquet
       - name: Final E2E certification contract
         run: |
           python - <<'PY'

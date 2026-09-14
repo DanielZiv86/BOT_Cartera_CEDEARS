@@ -39,6 +39,19 @@ def _classify_sector(row:pd.Series,policy:dict)->tuple[str|None,str]:
     official=str(row.get('industry_sector_official') or '').upper(); provider=str(row.get('fundamental_sector') or row.get('sector') or row.get('finnhub_sector') or row.get('fundamental_industry') or row.get('industry') or '').upper(); text=f'{official} {provider}'.strip()
     if any(k in text for k in ('BANK','FINANC','INSURANCE','CAPITAL MARKET','ASSET MANAGEMENT')):return 'FINANCIALS','COMAFI_OR_PROVIDER_METADATA'
     if any(k in text for k in ('ENERGY','OIL','GAS','PETROLE','PETRÓLE','PETROLEUM')):return 'ENERGY','COMAFI_OR_PROVIDER_METADATA'
+    # Checked ahead of the CORPORATE catch-all so these genuinely distinct
+    # economics (regulated/rate-base, commodity-cycle, defensive-vs-
+    # discretionary consumer) get their own formula instead of being flattened
+    # into CORPORATE's generic growth-EPS-x-PE model -- see _utilities_
+    # targets/_basic_materials_targets/_consumer_non_cyclical_targets/
+    # _consumer_cyclical_targets. Comafi's own "Industria o Sector" text is
+    # checked verbatim (e.g. "Utilities", "Basic Materials", "Consumer,
+    # Non-cyclical"/"Consumer, Cyclical") -- confirmed against the real
+    # canonical universe, not guessed from the 13-category list alone.
+    if 'UTILIT' in text:return 'UTILITIES','COMAFI_OR_PROVIDER_METADATA'
+    if any(k in text for k in ('BASIC MATERIAL','BASIC MATERIALS')):return 'BASIC_MATERIALS','COMAFI_OR_PROVIDER_METADATA'
+    if any(k in text for k in ('CONSUMER, NON-CYCLICAL','CONSUMER NON-CYCLICAL','CONSUMER, NONCYCLICAL')):return 'CONSUMER_NON_CYCLICAL','COMAFI_OR_PROVIDER_METADATA'
+    if any(k in text for k in ('CONSUMER, CYCLICAL','CONSUMER CYCLICAL')):return 'CONSUMER_CYCLICAL','COMAFI_OR_PROVIDER_METADATA'
     corporate_keywords=tuple(str(x).upper() for x in (policy.get('sector_classification',{}) or {}).get('corporate_keywords',('TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE')))
     if any(k in text for k in corporate_keywords):return 'CORPORATE','COMAFI_OR_PROVIDER_METADATA'
     return None,'UNVERIFIED'
@@ -188,6 +201,79 @@ def _energy_targets(row,current,median,low,bull_cap,policy):
     if bull>raw_bull:flags.append('ENERGY_BULL_ORDERING_FLOOR_APPLIED')
     return bear,base,bull,flags
 
+def _utilities_targets(row,current,median,low,bull_cap,policy):
+    c=policy.get('utilities',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
+    if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('UTILITIES_FUNDAMENTALS_INCOMPLETE')
+    # Regulated utilities are not a growth story -- no growth-adjusted PE cap
+    # like CORPORATE, just a narrow low-PE band reflecting their real trading
+    # range (stable, rate-regulated earnings). High leverage is structural to
+    # the regulated rate-base financing model, not a risk signal, so
+    # CORPORATE's Debt/Equity bear-stress penalty deliberately does not
+    # apply here. Dividend credit is weighted higher than ENERGY/other
+    # archetypes since utilities are valued mainly on yield.
+    pem=_clip(pe,float(c.get('base_pe_floor',10)),float(c.get('base_pe_cap',20))); basefund=eps*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
+    raw_bear=eps*max(float(c.get('bear_pe_floor',7)),pem*float(c.get('bear_multiple_factor',.85)))+current*div*float(c.get('dividend_credit',.75)); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    raw_bull=eps*pem*float(c.get('bull_multiple_factor',1.15))+current*div; min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=['UTILITIES_REGULATED_NARROW_PE_BAND_NO_LEVERAGE_STRESS']
+    if bear!=raw_bear:flags.append('UTILITIES_BEAR_CONSENSUS_BLEND_APPLIED')
+    if bull>raw_bull:flags.append('UTILITIES_BULL_ORDERING_FLOOR_APPLIED')
+    return bear,base,bull,flags
+
+def _basic_materials_targets(row,current,median,low,bull_cap,policy):
+    c=policy.get('materials',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); fcf=_rate(_first_num(row,'fundamental_fcf_yield','fcf_yield')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
+    if eps is None or eps<=0 or pe is None or pe<=0:raise ValueError('MATERIALS_FUNDAMENTALS_INCOMPLETE')
+    # Same commodity-cycle logic as ENERGY (_energy_targets) -- Basic
+    # Materials (miners, chemicals, fertilizers) is genuinely cyclical and
+    # commodity-price-linked, not a growth-EPS story like CORPORATE.
+    peb=_clip(pe,float(c.get('base_pe_floor',5)),float(c.get('base_pe_cap',14))); earn=eps*peb; fcfb=current if fcf is None or fcf<=0 else current*_clip(fcf/float(c.get('normalized_fcf_yield',.08)),.70,1.30); bf=float(c.get('earnings_weight',.65))*earn+(1-float(c.get('earnings_weight',.65)))*fcfb; blend=float(c.get('consensus_base_blend',.15)); base=(1-blend)*bf+blend*median
+    raw_bear=bf*float(c.get('bear_cycle_factor',.70))+current*div*float(c.get('dividend_credit',.5)); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    raw_bull=bf*float(c.get('bull_cycle_factor',1.30))+current*div; min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=['MATERIALS_CYCLE_NORMALIZATION_APPLIED']
+    if bear!=raw_bear:flags.append('MATERIALS_BEAR_CONSENSUS_BLEND_APPLIED')
+    if bull>raw_bull:flags.append('MATERIALS_BULL_ORDERING_FLOOR_APPLIED')
+    return bear,base,bull,flags
+
+def _consumer_non_cyclical_targets(row,current,median,low,bull_cap,policy):
+    c=policy.get('consumer_non_cyclical',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y')); div=_rate(_first_num(row,'fundamental_dividend_yield','dividend_yield')) or 0
+    if eps is None or eps<=0 or pe is None or pe<=0 or growth is None:raise ValueError('CONSUMER_NON_CYCLICAL_FUNDAMENTALS_INCOMPLETE')
+    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20)))
+    pe_cap_base=float(c.get('pe_cap_base',16)); pe_cap_growth_sensitivity=float(c.get('pe_cap_growth_sensitivity',1.5)); pe_cap_ceiling=float(c.get('pe_cap_ceiling',50))
+    dynamic_pe_cap=_clip(pe_cap_base+pe_cap_growth_sensitivity*max(g,0.0)*100.0,pe_cap_base,pe_cap_ceiling)
+    pem=_clip(pe,float(c.get('base_pe_floor',8)),dynamic_pe_cap); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
+    # Staples/health/pharma-style names have more resilient earnings through a
+    # downturn than the generic CORPORATE bucket -- a smaller base
+    # compression (0.12 vs CORPORATE's 0.18), plus a dividend credit (many
+    # non-cyclicals pay one, unlike most CORPORATE growth names), same
+    # mechanism ENERGY already uses.
+    comp=float(c.get('bear_eps_compression',.12))
+    raw_bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',6)),pem*float(c.get('bear_multiple_factor',.82)))+current*div*float(c.get('dividend_credit',.4)); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    bg=_clip(max(g,float(c.get('bull_growth_floor',.06)))+float(c.get('bull_growth_increment',.06)),float(c.get('bull_growth_floor',.06)),float(c.get('bull_growth_cap',.25)))
+    raw_bull=eps*(1+bg)*pem*float(c.get('bull_multiple_factor',1.10)); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=[]
+    if dynamic_pe_cap>pe_cap_base:flags.append('CONSUMER_NON_CYCLICAL_GROWTH_ADJUSTED_PE_CAP_APPLIED')
+    if bear!=raw_bear:flags.append('CONSUMER_NON_CYCLICAL_BEAR_CONSENSUS_BLEND_APPLIED')
+    if bull>raw_bull:flags.append('CONSUMER_NON_CYCLICAL_BULL_ORDERING_FLOOR_APPLIED')
+    return bear,base,bull,flags
+
+def _consumer_cyclical_targets(row,current,median,low,bull_cap,policy):
+    c=policy.get('consumer_cyclical',{}) or {}; eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized')); growth=_rate(row.get('fundamental_eps_growth_3y'))
+    if eps is None or eps<=0 or pe is None or pe<=0 or growth is None:raise ValueError('CONSUMER_CYCLICAL_FUNDAMENTALS_INCOMPLETE')
+    g=_clip(growth,float(c.get('base_growth_floor',-.10)),float(c.get('base_growth_cap',.20)))
+    pe_cap_base=float(c.get('pe_cap_base',14)); pe_cap_growth_sensitivity=float(c.get('pe_cap_growth_sensitivity',1.5)); pe_cap_ceiling=float(c.get('pe_cap_ceiling',50))
+    dynamic_pe_cap=_clip(pe_cap_base+pe_cap_growth_sensitivity*max(g,0.0)*100.0,pe_cap_base,pe_cap_ceiling)
+    pem=_clip(pe,float(c.get('base_pe_floor',6)),dynamic_pe_cap); basefund=eps*(1+g)*pem; blend=float(c.get('consensus_base_blend',.20)); base=(1-blend)*basefund+blend*median
+    # Discretionary/cyclical names see real earnings compression in a
+    # downturn (recession-sensitive demand) -- a LARGER base compression than
+    # CORPORATE (0.24 vs 0.18), plus an extra stress term keyed on
+    # fundamental_current_ratio (liquidity cushion; unused by any other
+    # archetype today) mirroring how CORPORATE stresses on Debt/Equity.
+    cr=_num(row.get('fundamental_current_ratio')); extra=0 if cr is None else _clip(max(float(c.get('current_ratio_stress_start',1.20))-cr,0)*float(c.get('current_ratio_stress_slope',.10)),0,float(c.get('max_liquidity_extra_compression',.12))); comp=_clip(float(c.get('bear_eps_compression',.24))+extra,float(c.get('bear_eps_compression',.24)),float(c.get('bear_eps_compression_cap',.40)))
+    raw_bear=eps*(1-comp)*max(float(c.get('bear_pe_floor',4)),pem*float(c.get('bear_multiple_factor',.72))); bear_blend=float(c.get('consensus_bear_blend',.20)); bear=(1-bear_blend)*raw_bear+bear_blend*low
+    bg=_clip(max(g,float(c.get('bull_growth_floor',.08)))+float(c.get('bull_growth_increment',.08)),float(c.get('bull_growth_floor',.08)),float(c.get('bull_growth_cap',.30)))
+    raw_bull=eps*(1+bg)*pem*float(c.get('bull_multiple_factor',1.12)); min_premium=float(c.get('minimum_bull_premium_to_base',.10)); bull=min(max(raw_bull,base*(1+min_premium)),bull_cap); flags=[]
+    if dynamic_pe_cap>pe_cap_base:flags.append('CONSUMER_CYCLICAL_GROWTH_ADJUSTED_PE_CAP_APPLIED')
+    if extra>0:flags.append('CONSUMER_CYCLICAL_LIQUIDITY_STRESS_APPLIED')
+    if bear!=raw_bear:flags.append('CONSUMER_CYCLICAL_BEAR_CONSENSUS_BLEND_APPLIED')
+    if bull>raw_bull:flags.append('CONSUMER_CYCLICAL_BULL_ORDERING_FLOOR_APPLIED')
+    return bear,base,bull,flags
+
 def _equity_review(row,policy):
     out=row.to_dict(); blockers=[]; flags=[]; current=_num(row.get('current_price')); confidence=_num(row.get('valuation_confidence'))
     if current is None or current<=0:blockers.append('SCENARIO_CURRENT_PRICE_MISSING')
@@ -203,6 +289,10 @@ def _equity_review(row,policy):
         if factor!=1.0:flags.append('SCENARIO_FUNDAMENTALS_NORMALIZED_TO_TRADED_SECURITY')
         if sector=='FINANCIALS':bear,base,bull,mf=_financial_targets(scenario_row,current,median,low,bcap,policy)
         elif sector=='ENERGY':bear,base,bull,mf=_energy_targets(scenario_row,current,median,low,bcap,policy)
+        elif sector=='UTILITIES':bear,base,bull,mf=_utilities_targets(scenario_row,current,median,low,bcap,policy)
+        elif sector=='BASIC_MATERIALS':bear,base,bull,mf=_basic_materials_targets(scenario_row,current,median,low,bcap,policy)
+        elif sector=='CONSUMER_NON_CYCLICAL':bear,base,bull,mf=_consumer_non_cyclical_targets(scenario_row,current,median,low,bcap,policy)
+        elif sector=='CONSUMER_CYCLICAL':bear,base,bull,mf=_consumer_cyclical_targets(scenario_row,current,median,low,bcap,policy)
         else:bear,base,bull,mf=_corporate_targets(scenario_row,current,median,low,bcap,policy)
         flags.extend(mf)
     except ValueError as exc:blockers.append(str(exc)); bear=base=bull=None

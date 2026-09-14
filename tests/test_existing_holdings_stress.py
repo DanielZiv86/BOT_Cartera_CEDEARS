@@ -110,3 +110,36 @@ def test_existing_holdings_stress_ignores_zero_weight_positions(tmp_path):
     assert total == 0.0
     assert metrics['existing_holdings_assessed_weight'] == 0.0
     assert metrics['existing_holdings_unassessed_weight'] == 0.0
+
+
+def test_existing_holdings_stress_merges_missing_sector_from_universe_when_provided(tmp_path):
+    # build_valuation_scenarios.py's real broad-universe output never carries
+    # industry_sector_official (found 2026-09-14, while validating the
+    # sector-taxonomy expansion against real data) -- valuation_scenarios.yml
+    # already re-merges it back in from the canonical universe for the
+    # Top-30 before Deep Scenario Review; universe_path lets this function do
+    # the same for held tickers outside the Top-30, which previously always
+    # fell through to SECTOR_CLASSIFICATION_UNVERIFIED unless overridden.
+    row = _row('CONSCO', 80, 100, 88, 65, 3, 18, .05, .65, .3, sector='Technology')
+    del row['industry_sector_official']  # simulate the real broad-valuation gap
+    broad = pd.DataFrame([row])
+    broad_path = tmp_path / 'broad_valuation.parquet'
+    broad.to_parquet(broad_path, index=False)
+    policy_path = tmp_path / 'scenario_review_policy.yml'
+    _write_policy(policy_path)
+
+    universe = pd.DataFrame([{'cedear_ticker': 'CONSCO', 'industry_sector_official': 'Technology'}])
+    universe_path = tmp_path / 'cedear_universe_master.parquet'
+    universe.to_parquet(universe_path, index=False)
+
+    positions = pd.DataFrame([{'cedear_ticker': 'CONSCO', 'weight': 0.30}])
+    positions_path = tmp_path / 'portfolio_positions.parquet'
+    positions.to_parquet(positions_path, index=False)
+
+    _, metrics_without = _compute_existing_holdings_stress(str(positions_path), str(broad_path), str(policy_path))
+    assert metrics_without['existing_holdings_unassessed_tickers'] == ['CONSCO']
+
+    total_with, metrics_with = _compute_existing_holdings_stress(str(positions_path), str(broad_path), str(policy_path), universe_path=str(universe_path))
+    assert metrics_with['existing_holdings_unassessed_tickers'] == []
+    assert metrics_with['existing_holdings_assessed_weight'] == pytest.approx(0.30)
+    assert total_with > 0.0

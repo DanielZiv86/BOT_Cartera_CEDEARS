@@ -9,6 +9,10 @@ POLICY={
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
  'energy':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.72,'bull_cycle_factor':1.28,'dividend_credit':.5,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
+ 'utilities':{'base_pe_floor':10,'base_pe_cap':20,'consensus_base_blend':.20,'bear_pe_floor':7,'bear_multiple_factor':.85,'dividend_credit':.75,'bull_multiple_factor':1.15,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
+ 'materials':{'base_pe_floor':5,'base_pe_cap':14,'earnings_weight':.65,'normalized_fcf_yield':.08,'consensus_base_blend':.15,'bear_cycle_factor':.70,'bull_cycle_factor':1.30,'dividend_credit':.5,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
+ 'consumer_non_cyclical':{'base_growth_floor':-.10,'base_growth_cap':.20,'base_pe_floor':8,'pe_cap_base':16,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':50,'consensus_base_blend':.20,'bear_eps_compression':.12,'bear_multiple_factor':.82,'bear_pe_floor':6,'dividend_credit':.40,'bull_growth_floor':.06,'bull_growth_increment':.06,'bull_growth_cap':.25,'bull_multiple_factor':1.10,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
+ 'consumer_cyclical':{'base_growth_floor':-.10,'base_growth_cap':.20,'base_pe_floor':6,'pe_cap_base':14,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':50,'consensus_base_blend':.20,'bear_eps_compression':.24,'bear_eps_compression_cap':.40,'bear_multiple_factor':.72,'bear_pe_floor':4,'current_ratio_stress_start':1.20,'current_ratio_stress_slope':.10,'max_liquidity_extra_compression':.12,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30,'bull_multiple_factor':1.12,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
  'consensus':{'dispersion_review_threshold':.75,'high_distance_from_median_cap':.50,'low_distance_from_median_floor':.50},'plausibility':{'max_standard_bull_upside':.60,'max_standard_bear_downside':.40},'probabilities':{'base_probability':.50,'bull_min':.12,'bull_max':.32,'bull_floor':.08,'bull_ceiling':.35,'dispersion_penalty_start':.50,'dispersion_bull_penalty_max':.07}}
 
 def _row(ticker,current,high,median,low,eps,pe,growth,confidence=.60,de=.8,sector='Technology',**extra):
@@ -203,3 +207,81 @@ def test_mastercard_routes_to_corporate_like_visa_not_bank_balance_sheet_model()
  # A P/B-driven collapse would put Bear near current*0.04 (~$24); the
  # payment-network model should keep it in a materially saner range.
  assert r['bear_target_price']>567.5*0.30
+
+def test_utilities_routes_from_official_sector_and_orders_scenarios():
+ out,_=validate_scenarios(pd.DataFrame([_row('UTILCO',60,75,65,50,3,15,.03,.65,sector='Utilities',fundamental_dividend_yield=.035)]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='UTILITIES'; assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'UTILITIES_REGULATED_NARROW_PE_BAND_NO_LEVERAGE_STRESS' in r['scenario_review_flags']
+
+def test_utilities_bear_case_blends_toward_consensus_low():
+ # Same reasoning as CORPORATE/FINANCIALS/ENERGY: the mechanical bear case
+ # blends toward the winsorized consensus low rather than standing alone.
+ out,_=validate_scenarios(pd.DataFrame([_row('UTILCO',60,75,65,50,3,15,.03,.65,sector='Utilities',fundamental_dividend_yield=.035)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ pem=15; raw_mechanical_bear=3*max(7,pem*.85)+60*.035*.75
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*50,rel=1e-4)
+ assert 'UTILITIES_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
+
+def test_basic_materials_routes_from_official_sector_and_orders_scenarios():
+ out,_=validate_scenarios(pd.DataFrame([_row('MATCO',50,65,55,40,4,10,.05,.65,sector='Basic Materials',fundamental_fcf_yield=.06,fundamental_dividend_yield=.02)]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='BASIC_MATERIALS'; assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'MATERIALS_CYCLE_NORMALIZATION_APPLIED' in r['scenario_review_flags']
+
+def test_basic_materials_bear_case_blends_toward_consensus_low():
+ out,_=validate_scenarios(pd.DataFrame([_row('MATCO',50,65,55,40,4,10,.05,.65,sector='Basic Materials',fundamental_fcf_yield=.06,fundamental_dividend_yield=.02)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ peb=10; earn=4*peb; fcfb=50*max(min(.06/.08,1.3),.7); bf=.65*earn+.35*fcfb
+ raw_mechanical_bear=bf*.70+50*.02*.5
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*40,rel=1e-4)
+ assert 'MATERIALS_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
+
+def test_consumer_non_cyclical_routes_and_orders_scenarios():
+ out,_=validate_scenarios(pd.DataFrame([_row('STAPLECO',80,100,88,65,3,18,.05,.65,sector='Consumer, Non-cyclical',fundamental_dividend_yield=.025)]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='CONSUMER_NON_CYCLICAL'; assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+
+def test_consumer_non_cyclical_bear_case_blends_toward_consensus_low():
+ # Smaller base compression (0.12) than CORPORATE (0.18) reflects the more
+ # resilient earnings of a staples/health/pharma-style name in a downturn.
+ out,_=validate_scenarios(pd.DataFrame([_row('STAPLECO',80,100,88,65,3,18,.05,.65,sector='Consumer, Non-cyclical',fundamental_dividend_yield=.025)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ pem=18; raw_mechanical_bear=3*(1-.12)*max(6,pem*.82)+80*.025*.4
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*65,rel=1e-4)
+ assert 'CONSUMER_NON_CYCLICAL_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
+
+def test_consumer_cyclical_routes_and_orders_scenarios():
+ out,_=validate_scenarios(pd.DataFrame([_row('CYCCO',70,90,78,52,3,14,.05,.65,sector='Consumer, Cyclical',fundamental_current_ratio=1.5)]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='CONSUMER_CYCLICAL'; assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']
+ assert 'CONSUMER_CYCLICAL_LIQUIDITY_STRESS_APPLIED' not in r['scenario_review_flags']
+
+def test_consumer_cyclical_bear_case_blends_toward_consensus_low():
+ # Larger base compression (0.24) than CORPORATE (0.18) reflects real
+ # recession-sensitive demand for discretionary/cyclical names.
+ out,_=validate_scenarios(pd.DataFrame([_row('CYCCO',70,90,78,52,3,14,.05,.65,sector='Consumer, Cyclical',fundamental_current_ratio=1.5)]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ pem=14; raw_mechanical_bear=3*(1-.24)*max(4,pem*.72)
+ assert r['bear_target_price']==pytest.approx(0.8*raw_mechanical_bear+0.2*52,rel=1e-4)
+ assert 'CONSUMER_CYCLICAL_BEAR_CONSENSUS_BLEND_APPLIED' in r['scenario_review_flags']
+
+def test_consumer_cyclical_liquidity_stress_widens_bear_case_below_current_ratio_threshold():
+ # fundamental_current_ratio is otherwise unused by any archetype -- a
+ # liquidity cushion below current_ratio_stress_start (1.20) adds extra bear
+ # compression, mirroring how CORPORATE stresses on Debt/Equity, on a signal
+ # that matters more for cyclical consumer names in a downturn.
+ stressed,_=validate_scenarios(pd.DataFrame([_row('CYCCO2',70,90,78,52,3,14,.05,.65,sector='Consumer, Cyclical',fundamental_current_ratio=0.9)]),POLICY); rs=stressed.iloc[0]
+ unstressed,_=validate_scenarios(pd.DataFrame([_row('CYCCO3',70,90,78,52,3,14,.05,.65,sector='Consumer, Cyclical',fundamental_current_ratio=1.5)]),POLICY); ru=unstressed.iloc[0]
+ assert rs['scenario_validated'] and ru['scenario_validated']
+ assert 'CONSUMER_CYCLICAL_LIQUIDITY_STRESS_APPLIED' in rs['scenario_review_flags']
+ assert rs['bear_target_price']<ru['bear_target_price']
+
+def test_spgi_style_override_wins_over_new_consumer_non_cyclical_auto_classification():
+ # SPGI's real Comafi category is "Consumer, Non-cyclical" (it's a
+ # ratings/data business), but the existing sector_overrides entry keeps it
+ # FINANCIALS -- a deliberate per-ticker judgment call that predates and
+ # must not be silently reshuffled by the expanded taxonomy.
+ row=_row('SPGI',500,650,560,420,20,25,.10,.7,sector='Consumer, Non-cyclical',fundamental_book_value_per_share=8,fundamental_price_to_book=62.5,fundamental_roe=55)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='FINANCIALS'; assert r['scenario_sector_source']=='POLICY_OVERRIDE'
