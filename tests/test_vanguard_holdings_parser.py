@@ -52,3 +52,51 @@ def test_vanguard_embedded_json_state_recovers_holdings():
 def test_vanguard_embedded_parser_rejects_cash_and_zero_weight():
     page = "Cash (USD) 1.00% Company (ABC) 0.00%"
     assert IssuerHoldingsConnector._extract_vanguard_embedded_holdings(page) == []
+
+
+def test_vanguard_additional_fund_data_parses_equity_holdings_and_as_of_date():
+    # Real shape of investor.vanguard.com/irr/funds/profile/{ticker}-AdditionalFundData,
+    # the replacement for the old portfolio-holding/stock API (found 2026-09-14 --
+    # that one now 301-redirects to Vanguard's Angular app shell instead of JSON).
+    payload = {
+        "holdingDetails": {
+            "asOfDate": "07/31/2026",
+            "equityHoldings": [
+                {"ticker": "AVGO", "marketValuePercentage": "4.62%", "securityLongDescription": "Broadcom Inc"},
+                {"ticker": "AAPL", "marketValuePercentage": "4.44%", "securityLongDescription": "Apple Inc"},
+            ],
+            "shortTermReservesHoldings": [{"marketValuePercentage": "0.29%", "securityLongDescription": "MKTLIQ"}],
+        }
+    }
+    rows, as_of = IssuerHoldingsConnector._parse_vanguard_additional_fund_data(payload)
+    assert rows == [{"symbol": "AVGO", "percent": 4.62}, {"symbol": "AAPL", "percent": 4.44}]
+    assert as_of == "2026-07-31"
+
+
+def test_vanguard_additional_fund_data_rejects_cash_and_zero_weight_entries():
+    payload = {
+        "holdingDetails": {
+            "asOfDate": "07/31/2026",
+            "equityHoldings": [
+                {"ticker": "CASH", "marketValuePercentage": "1.00%"},
+                {"ticker": "ABC", "marketValuePercentage": "0.00%"},
+                {"ticker": "AAPL", "marketValuePercentage": "4.44%"},
+            ],
+        }
+    }
+    rows, as_of = IssuerHoldingsConnector._parse_vanguard_additional_fund_data(payload)
+    assert rows == [{"symbol": "AAPL", "percent": 4.44}]
+    assert as_of == "2026-07-31"
+
+
+def test_vanguard_additional_fund_data_missing_holding_details_yields_no_rows_and_no_as_of():
+    rows, as_of = IssuerHoldingsConnector._parse_vanguard_additional_fund_data({"historicalPrice": {}})
+    assert rows == []
+    assert as_of is None
+
+
+def test_vanguard_additional_fund_data_unparseable_as_of_date_yields_none():
+    payload = {"holdingDetails": {"asOfDate": "not-a-date", "equityHoldings": [{"ticker": "AAPL", "marketValuePercentage": "4.44%"}]}}
+    rows, as_of = IssuerHoldingsConnector._parse_vanguard_additional_fund_data(payload)
+    assert rows == [{"symbol": "AAPL", "percent": 4.44}]
+    assert as_of is None
