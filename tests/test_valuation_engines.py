@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.connectors.issuer_holdings import HoldingsSnapshot
 from src.connectors.non_equity_tracker import TrackerSnapshot
 from src.orchestration.build_valuation_scenarios import _is_etf
@@ -75,6 +77,8 @@ class EquityConnector:
         self.price_target_calls = []
         self.recommendation_calls = []
         self.financial_calls = []
+        self.profile_calls = []
+        self.reporting_currency = "USD"
     def price_target(self, symbol):
         self.price_target_calls.append(symbol)
         return {"targetHigh": 150, "targetMean": 125, "targetMedian": 123, "targetLow": 90, "numberAnalysts": 20, "lastUpdated": "2026-09-01"}
@@ -92,8 +96,25 @@ class EquityConnector:
             "currentRatioAnnual": 1.5,
             "marketCapitalization": 500000.0,
         }}
+    def company_profile(self, symbol):
+        self.profile_calls.append(symbol)
+        return {"currency": self.reporting_currency}
     def retrieved_at(self):
         return "2026-09-05T00:00:00+00:00"
+
+
+class FakeFxConnector:
+    def __init__(self, rates):
+        self.rates = rates
+        self.calls = []
+    def get_last_close(self, symbol):
+        self.calls.append(symbol)
+        from src.connectors.base import PriceQuote
+        from datetime import date as _date
+        rate = self.rates.get(symbol)
+        if rate is None:
+            return None
+        return PriceQuote(symbol=symbol, close=rate, close_date=_date(2026, 9, 14), prior_close=None, currency=None, source="fake", source_ref="fake", provider_tier="TEST", confidence="HIGH_SECONDARY")
 
 
 class ETFConnector:
@@ -170,6 +191,52 @@ def test_equity_ready_when_consensus_is_fresh_and_fundamentals_are_attached():
     assert connector.price_target_calls == ["AAA"]
     assert connector.recommendation_calls == []
     assert connector.financial_calls == ["AAA"]
+
+
+def test_equity_usd_reporting_currency_skips_fx_correction():
+    connector = EquityConnector()
+    fx_connector = FakeFxConnector({})
+    row = build_equity_scenario("AAA", 100.0, connector, POLICY, as_of=date(2026, 9, 5), fx_connector=fx_connector)
+    assert row["fundamental_reporting_currency"] == "USD"
+    assert row["fundamental_fx_to_market"] is None
+    assert row["fundamental_fx_source_ref"] is None
+    assert fx_connector.calls == []
+
+
+def test_equity_non_usd_reporting_currency_applies_live_fx_correction():
+    # Real Ericsson-shaped case (found 2026-09-14): Finnhub declares the
+    # company's reporting currency as SEK; a live USD/SEK rate corrects the
+    # per-share fundamentals to USD terms via the same Yahoo connector
+    # already used for underlying prices elsewhere in the pipeline.
+    connector = EquityConnector()
+    connector.reporting_currency = "SEK"
+    fx_connector = FakeFxConnector({"USDSEK=X": 9.7675})
+    row = build_equity_scenario("ERIC", 10.31, connector, POLICY, as_of=date(2026, 9, 5), fx_connector=fx_connector)
+    assert row["fundamental_reporting_currency"] == "SEK"
+    assert row["fundamental_fx_to_market"] == pytest.approx(1.0 / 9.7675)
+    assert row["fundamental_fx_source_ref"] == "Yahoo Finance USDSEK=X"
+    assert fx_connector.calls == ["USDSEK=X"]
+
+
+def test_equity_non_usd_currency_without_fx_connector_leaves_fx_unset():
+    # Never fabricate a rate -- if no live FX source is wired in, the
+    # currency is still reported (useful metadata) but the correction
+    # itself stays unset rather than silently assuming 1.0 is safe.
+    connector = EquityConnector()
+    connector.reporting_currency = "BRL"
+    row = build_equity_scenario("PAGS", 10.12, connector, POLICY, as_of=date(2026, 9, 5))
+    assert row["fundamental_reporting_currency"] == "BRL"
+    assert row["fundamental_fx_to_market"] is None
+
+
+def test_equity_fx_lookup_failure_leaves_fx_unset_not_fabricated():
+    connector = EquityConnector()
+    connector.reporting_currency = "BRL"
+    fx_connector = FakeFxConnector({})  # live lookup returns nothing
+    row = build_equity_scenario("PAGS", 10.12, connector, POLICY, as_of=date(2026, 9, 5), fx_connector=fx_connector)
+    assert row["fundamental_reporting_currency"] == "BRL"
+    assert row["fundamental_fx_to_market"] is None
+    assert fx_connector.calls == ["USDBRL=X"]
 
 
 def test_equity_stale_target_blocks_but_keeps_fundamental_evidence():

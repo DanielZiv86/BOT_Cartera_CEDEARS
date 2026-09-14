@@ -14,6 +14,7 @@ import yaml
 from src.connectors.finnhub import FinnhubConnector
 from src.connectors.issuer_holdings import HoldingsSnapshot, IssuerHoldingsConnector, IssuerHoldingsError
 from src.connectors.non_equity_tracker import NonEquityTrackerConnector
+from src.connectors.yahoo import YahooPriceConnector
 from src.valuation.equity_engine import build_equity_scenario
 from src.valuation.etf_engine import ConstituentScenario, build_etf_scenario
 from src.valuation.etf_issuer_engine import build_issuer_etf_scenario
@@ -88,11 +89,11 @@ def _blocker_diagnostics(result: pd.DataFrame):
 
 def main() -> int:
     p=argparse.ArgumentParser(); p.add_argument("--universe",required=True); p.add_argument("--underlying-prices",required=True); p.add_argument("--policy",default="config/valuation_policy.yml"); p.add_argument("--etf-sources",default="config/etf_issuer_sources.yml"); p.add_argument("--non-equity-policy",default="config/non_equity_tracker_policy.yml"); p.add_argument("--output-dir",default="data/canonical/valuation"); args=p.parse_args()
-    universe=pd.read_parquet(args.universe).sort_values("cedear_ticker"); prices=pd.read_parquet(args.underlying_prices); policy=yaml.safe_load(Path(args.policy).read_text()) or {}; tracker_policy=yaml.safe_load(Path(args.non_equity_policy).read_text()) or {}; source_cfg=_load_issuer_sources(args.etf_sources); finnhub=FinnhubConnector(); issuer_holdings=IssuerHoldingsConnector(source_cfg); tracker_connector=NonEquityTrackerConnector(tracker_policy); prices_by_cedear=_price_map(prices)
+    universe=pd.read_parquet(args.universe).sort_values("cedear_ticker"); prices=pd.read_parquet(args.underlying_prices); policy=yaml.safe_load(Path(args.policy).read_text()) or {}; tracker_policy=yaml.safe_load(Path(args.non_equity_policy).read_text()) or {}; source_cfg=_load_issuer_sources(args.etf_sources); finnhub=FinnhubConnector(); fx_connector=YahooPriceConnector(); issuer_holdings=IssuerHoldingsConnector(source_cfg); tracker_connector=NonEquityTrackerConnector(tracker_policy); prices_by_cedear=_price_map(prices)
     classified=[(item,_is_etf(str(item.get("cedear_ticker") or "").upper(),item.get("instrument_type"),item.get("issuer_name"),policy)) for _,item in universe.iterrows()]; rows={}; equities={}; cache={}; quality=policy.get("quality",{}) or {}; limit=int(quality.get("maximum_global_direct_constituent_lookups",60)); budget={"initial":limit,"remaining":limit}; premium=bool((policy.get("provider_fallbacks",{}) or {}).get("finnhub_premium_etf_enabled",False)); equity_count=etf_count=issuer_ready=finnhub_ready=non_equity_ready=0
     for item,is_etf in classified:
         if is_etf: continue
-        cedear=str(item.get("cedear_ticker") or "").upper(); underlying=str(item.get("underlying_ticker") or cedear).upper(); scenario=build_equity_scenario(underlying,prices_by_cedear.get(cedear),finnhub,policy); scenario.update({"cedear_ticker":cedear,"underlying_ticker":underlying,"instrument_type":item.get("instrument_type"),"valuation_engine_type":"EQUITY","methodology_version":policy.get("methodology_version","VAL-1.0")}); rows[cedear]=scenario; equities[underlying]=scenario; equity_count+=1
+        cedear=str(item.get("cedear_ticker") or "").upper(); underlying=str(item.get("underlying_ticker") or cedear).upper(); scenario=build_equity_scenario(underlying,prices_by_cedear.get(cedear),finnhub,policy,fx_connector=fx_connector); scenario.update({"cedear_ticker":cedear,"underlying_ticker":underlying,"instrument_type":item.get("instrument_type"),"valuation_engine_type":"EQUITY","methodology_version":policy.get("methodology_version","VAL-1.0")}); rows[cedear]=scenario; equities[underlying]=scenario; equity_count+=1
     non_equity={str(t).upper() for t in policy.get("instrument_overrides",{}).get("non_equity_trackers",[])}; work=[]
     for item,is_etf in classified:
         if not is_etf: continue

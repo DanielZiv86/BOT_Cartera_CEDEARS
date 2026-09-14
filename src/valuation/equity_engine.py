@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 
 from src.connectors.finnhub import FinnhubAccessDenied, FinnhubConnector, FinnhubError
+from src.connectors.yahoo import YahooPriceConnector
 from src.valuation.common import age_days, as_float, normalized_probabilities
 from src.valuation.index_etf_engine import build_index_etf_scenario
 
@@ -16,7 +17,37 @@ def _metric(metrics: dict[str, Any], *names: str) -> float | None:
     return None
 
 
-def build_equity_scenario(symbol: str, current_price: float | None, connector: FinnhubConnector, policy: dict[str, Any], as_of: date | None = None) -> dict[str, Any]:
+def _resolve_fx_to_market(ticker: str, connector: FinnhubConnector, fx_connector: YahooPriceConnector | None) -> tuple[float | None, str | None, str | None]:
+    """Some ADRs report per-share fundamentals (EPS, book value) in the
+    issuer's home-market currency even though the ADR itself trades in USD
+    (found for PAGS/BRL and ERIC/SEK, 2026-09-14) -- this looks identical to
+    a genuine unit/scale mismatch to _identity_check unless corrected.
+
+    Finnhub's own declared reporting currency (never guessed) decides
+    whether a correction is even needed. The correction itself is a live
+    market FX rate -- unlike an ADR ratio, an FX rate isn't a fixed
+    corporate fact, so it can never be a hardcoded policy-config value
+    without going stale -- fetched from the same Yahoo Finance connector
+    already used for underlying prices elsewhere in this pipeline, via the
+    standard "USD{CCY}=X" ticker convention.
+    """
+    try:
+        profile = connector.company_profile(ticker)
+    except (FinnhubAccessDenied, FinnhubError):
+        return None, None, None
+    currency = str((profile or {}).get('currency') or '').strip().upper()
+    if not currency or currency == 'USD' or len(currency) != 3 or fx_connector is None:
+        return None, currency or None, None
+    try:
+        fx_quote = fx_connector.get_last_close(f'USD{currency}=X')
+    except Exception:  # noqa: BLE001
+        fx_quote = None
+    if fx_quote is None or not fx_quote.close or fx_quote.close <= 0:
+        return None, currency, None
+    return 1.0 / fx_quote.close, currency, f'Yahoo Finance USD{currency}=X'
+
+
+def build_equity_scenario(symbol: str, current_price: float | None, connector: FinnhubConnector, policy: dict[str, Any], as_of: date | None = None, fx_connector: YahooPriceConnector | None = None) -> dict[str, Any]:
     ticker = symbol.upper(); blockers = []; freshness = policy.get('freshness', {}); quality = policy.get('quality', {}); confidence_policy = policy.get('confidence', {}); probability_policy = policy.get('probabilities', {})
     max_pt_age = int(freshness.get('price_target_max_age_days', 45)); min_analysts = int(quality.get('minimum_equity_analyst_count', 3))
     try:
@@ -40,6 +71,8 @@ def build_equity_scenario(symbol: str, current_price: float | None, connector: F
         raw = connector.basic_financials(ticker); metrics = raw.get('metric', {}) if isinstance(raw, dict) and isinstance(raw.get('metric'), dict) else {}
     except (FinnhubAccessDenied, FinnhubError) as exc:
         fundamental_error = str(exc) if isinstance(exc, FinnhubAccessDenied) else 'FINNHUB_FUNDAMENTALS_REQUEST_FAILED'
+
+    fx_to_market, reporting_currency, fx_source_ref = _resolve_fx_to_market(ticker, connector, fx_connector)
 
     market_cap_millions = _metric(metrics, 'marketCapitalization')
     market_cap_usd = market_cap_millions * 1_000_000.0 if market_cap_millions is not None else None
@@ -66,6 +99,7 @@ def build_equity_scenario(symbol: str, current_price: float | None, connector: F
         'fundamental_dividend_yield': dividend_yield, 'fundamental_fcf_yield': fcf_yield,
         'eps_unit': 'UNDERLYING_SECURITY', 'target_price_unit': 'UNDERLYING_SECURITY',
         'fundamental_source_error': fundamental_error, 'fundamental_source_ref': 'Finnhub /stock/metric?metric=all',
+        'fundamental_fx_to_market': fx_to_market, 'fundamental_reporting_currency': reporting_currency, 'fundamental_fx_source_ref': fx_source_ref,
         'enrichment_status': 'SECTOR_AWARE_FUNDAMENTALS_ATTACHED', 'source_date': last_updated,
         'source_ref': 'Finnhub /stock/price-target + /stock/metric', 'retrieved_at': connector.retrieved_at(),
     }
