@@ -55,6 +55,22 @@ identity:
     TS:
       ordinary_shares_per_ads: 2.0
       source: TENARIS_IR_ADR_PROGRAM_PAGE_2_TO_1_SINCE_2006
+    # Found 2026-09-14: ARM was the sole BLOCKED_BY_DATA name in this week's
+    # real Top-30 (economic_identity_status=BLOCKED,
+    # FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED -- UK-domiciled
+    # issuer, Nasdaq-traded ADR, no verified ratio on file). The numeric
+    # identity ratio was already in-band without any adjustment
+    # (identity_implied_to_market_ratio=1.044), consistent with a 1:1 ADS
+    # ratio, not a scale mismatch -- confirmed directly against Arm Holdings
+    # plc's SEC Form 424B4 prospectus (2023 IPO): "Each ADS represents the
+    # right to receive one ordinary share". Applying it doesn't change the
+    # numeric identity check outcome (already in-band) -- it clears the
+    # separate FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED blocker,
+    # which requires a verified ratio on file regardless of how the raw
+    # ratio numerically looks.
+    ARM:
+      ordinary_shares_per_ads: 1.0
+      source: ARM_HOLDINGS_SEC_FORM_424B4_ADS_1_TO_1
   verified_direct_foreign_listings:
     AEG:
       ordinary_shares_per_us_traded_share: 1.0

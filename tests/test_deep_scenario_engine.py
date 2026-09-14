@@ -3,7 +3,7 @@ import pytest
 from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
- 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'},'PAGS':{'ordinary_shares_per_us_traded_share':1,'security_type':'NYSE_LISTED_CLASS_A_COMMON_SHARE','source':'PAGSEGURO_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
+ 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'ARM':{'ordinary_shares_per_ads':1,'source':'ARM_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'},'PAGS':{'ordinary_shares_per_us_traded_share':1,'security_type':'NYSE_LISTED_CLASS_A_COMMON_SHARE','source':'PAGSEGURO_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
@@ -165,6 +165,22 @@ def test_ten_verified_two_for_one_ads_reconciles_tenaris_identity():
  out,_=validate_scenarios(pd.DataFrame([_row('TEN',57.39,85.314705,63.058644,51.141653,1.8304,15.6591,-.0541,.7925,.027,underlying_ticker='TS',issuer_country_normalized='LU',underlying_market_official='New York')]),POLICY); r=out.iloc[0]
  assert r['identity_adr_ratio_applied']==2 and r['scenario_validated'], r['scenario_review_blockers']
  assert r['identity_implied_to_market_ratio']==pytest.approx(0.9988645,rel=1e-5)
+
+def test_arm_verified_one_to_one_ads_clears_foreign_traded_normalization_block():
+ # Real ARM data found 2026-09-14: the sole BLOCKED_BY_DATA name in that
+ # week's real Top-30. The numeric identity ratio (eps*pe/price) is already
+ # in-band (1.044) with no adjustment, but ARM is UK-domiciled and
+ # Nasdaq-traded, so FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED
+ # still fires without a verified ratio on file. Arm Holdings plc's SEC Form
+ # 424B4 IPO prospectus (2023): "Each ADS represents the right to receive
+ # one ordinary share" -- applying it as 1:1 doesn't change the ratio
+ # itself, just satisfies the verification requirement.
+ row=_row('ARM',243.4685058594,472.5,277.44,126.25,.8464,300.2923,.1834,.8,.003,sector='Technology',issuer_country_normalized='GB',underlying_market_official='NASDAQ GS')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['identity_adr_ratio_applied']==1 and r['identity_adr_ratio_verified']
+ assert 'VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED' in r['identity_flags']
+ assert r['identity_implied_to_market_ratio']==pytest.approx(1.0439437,rel=1e-5)
 
 def test_hon_eps_pe_miss_rescued_by_pb_corroboration():
  # Real Honeywell data found 2026-09-14: EPS/PE ratio is 0.493 (just below
