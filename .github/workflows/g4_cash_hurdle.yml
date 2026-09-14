@@ -24,7 +24,7 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
       - name: Run G4 and Deep Scenario regression tests
-        run: pytest -q tests/test_g4_cash_hurdle.py tests/test_deep_scenario_engine.py
+        run: pytest -q tests/test_g4_cash_hurdle.py tests/test_deep_scenario_engine.py tests/test_g4_blocker_triage.py
       - name: Download exact dispatched valuation artifact
         run: |
           VAL_RUN_ID="${{ inputs.valuation_run_id }}"
@@ -81,6 +81,8 @@ jobs:
           d.update({'g4_run_id':int('${{ github.run_id }}'),'valuation_run_id':int('${{ env.VAL_RUN_ID }}'),'local_market_run_id':int('${{ env.LOCAL_RUN_ID }}'),'portfolio_run_id':int('${{ env.PORTFOLIO_RUN_ID }}'),'g4_candidate_count':30,'scenario_review_count':30,'scenario_validated_count':int(m['scenario_validated_count']),'scenario_blocked_count':int(m['scenario_blocked_count']),'scenario_methodology_version':m['scenario_methodology_version'],'g4_methodology_version':m['methodology_version'],'handoff':'CERTIFIED_V2_2_SCENARIO_EXACT_RUN_DISPATCH'})
           Path('data/canonical/g4/e2e_lineage.json').write_text(json.dumps(d,indent=2))
           PY
+      - name: Triage any BLOCKED_BY_DATA tickers by root-cause bucket
+        run: python -m src.orchestration.build_g4_blocker_triage --scenario-review data/canonical/g4/scenario_review.json --policy config/g4_blocker_triage_policy.yml --output-dir data/canonical/g4
       - name: Upload G4 artifacts
         uses: actions/upload-artifact@v4
         with:
