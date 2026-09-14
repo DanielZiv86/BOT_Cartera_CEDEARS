@@ -204,7 +204,12 @@ class IssuerHoldingsConnector:
         return bool(symbol and symbol not in {"NAN", "--", "-", "CASH", "USD"} and "CASH" not in symbol and 0 < weight <= 100)
 
     def _fetch_vanguard_json(self, ticker: str) -> tuple[list[dict[str, Any]], str | None, str]:
-        url = f"https://investor.vanguard.com/investment-products/etfs/profile/api/{ticker.upper()}/portfolio-holding/stock?start=1&count=50000"
+        # The old investment-products/etfs/profile/api/{ticker}/portfolio-holding/stock
+        # endpoint now 301-redirects to Vanguard's Angular app shell (text/html, no JSON) --
+        # found 2026-09-14 while investigating why VIG/VEA were falling back to a stale
+        # secondary source. This is the endpoint Vanguard's own funds-web-components bundle
+        # calls for the same "AdditionalFundData" payload the profile page renders from.
+        url = f"https://investor.vanguard.com/irr/funds/profile/{ticker.upper()}-AdditionalFundData"
         response = self._get(url, headers=self.VANGUARD_BROWSER_HEADERS)
         content_type = str(response.headers.get("Content-Type") or "")
         try:
@@ -212,30 +217,39 @@ class IssuerHoldingsConnector:
         except ValueError as exc:
             preview = re.sub(r"\s+", " ", response.text[:120]).strip()
             raise IssuerHoldingsError(f"VANGUARD_JSON_INVALID:content_type={content_type}:body={preview!r}:{exc}") from exc
-        entities = (((payload.get("fund") or {}).get("entity")) or []) if isinstance(payload, dict) else []
-        rows: list[dict[str, Any]] = []
-        for item in entities:
-            if not isinstance(item, dict):
-                continue
-            symbol = str(item.get("ticker") or "").strip().upper()
-            raw_weight = item.get("percentWeight")
-            if not symbol or symbol in {"NAN", "--", "-", "CASH", "USD"} or "CASH" in symbol:
-                continue
-            try:
-                weight = float(str(raw_weight or "").replace("%", "").replace(",", "").strip())
-            except ValueError:
-                continue
-            if weight > 0:
-                rows.append({"symbol": symbol, "percent": weight})
-        as_of_raw = str(payload.get("asOfDate") or "") if isinstance(payload, dict) else ""
-        as_of_match = re.match(r"(\d{4}-\d{2}-\d{2})", as_of_raw)
-        as_of = as_of_match.group(1) if as_of_match else None
+        rows, as_of = self._parse_vanguard_additional_fund_data(payload)
         print(f"VANGUARD_JSON_DIAGNOSTIC ticker={ticker.upper()} status={response.status_code} content_type={content_type} holdings={len(rows)} as_of={as_of}")
         if not rows:
             raise IssuerHoldingsError("VANGUARD_JSON_NO_HOLDINGS")
         if as_of is None:
             raise IssuerHoldingsError("VANGUARD_JSON_AS_OF_MISSING")
         return rows, as_of, url
+
+    @staticmethod
+    def _parse_vanguard_additional_fund_data(payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+        holding_details = payload.get("holdingDetails") if isinstance(payload, dict) else None
+        equity_holdings = holding_details.get("equityHoldings") if isinstance(holding_details, dict) else None
+        rows: list[dict[str, Any]] = []
+        for item in equity_holdings or []:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("ticker") or "").strip().upper()
+            if not symbol or symbol in {"NAN", "--", "-", "CASH", "USD"} or "CASH" in symbol:
+                continue
+            try:
+                weight = float(str(item.get("marketValuePercentage") or "").replace("%", "").replace(",", "").strip())
+            except ValueError:
+                continue
+            if weight > 0:
+                rows.append({"symbol": symbol, "percent": weight})
+        as_of_raw = str((holding_details or {}).get("asOfDate") or "")
+        as_of = None
+        if as_of_raw:
+            try:
+                as_of = datetime.strptime(as_of_raw, "%m/%d/%Y").date().isoformat()
+            except ValueError:
+                as_of = None
+        return rows, as_of
 
     def _fetch_ishares_csv(self, product_url: str, ticker: str) -> tuple[list[dict[str, Any]], str | None]:
         base = product_url.rstrip("/")
