@@ -95,7 +95,7 @@ def _verified_security_mapping(row:pd.Series,policy:dict)->tuple[float,bool,str|
 
 def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,Any]]:
     blockers=[]; flags=[]; cfg=policy.get('identity',{}) or {}; current=_num(row.get('current_price')); eps=_num(row.get('fundamental_eps_normalized')); pe=_num(row.get('fundamental_pe_normalized'))
-    adr,adr_verified,adr_source,security_type=_verified_security_mapping(row,policy); fx=_num(row.get('fundamental_fx_to_market')); fx=1.0 if fx is None else fx
+    adr,adr_verified,adr_source,security_type=_verified_security_mapping(row,policy); raw_fx=_num(row.get('fundamental_fx_to_market')); fx_verified=raw_fx is not None and raw_fx>0; fx=raw_fx if fx_verified else 1.0
     implied_eps=eps*pe*adr*fx if eps is not None and pe is not None and eps>0 and pe>0 and adr>0 and fx>0 else None; ratio_eps=implied_eps/current if implied_eps is not None and current and current>0 else None
     bv=_first_num(row,'fundamental_book_value_per_share','book_value_per_share'); pb=_first_num(row,'fundamental_price_to_book','price_to_book'); implied_pb=bv*pb*adr*fx if bv is not None and pb is not None and bv>0 and pb>0 and adr>0 and fx>0 else None; ratio_pb=implied_pb/current if implied_pb is not None and current and current>0 else None
     lo=float(cfg.get('eps_pe_to_price_ratio_min',.55)); hi=float(cfg.get('eps_pe_to_price_ratio_max',1.80))
@@ -121,12 +121,20 @@ def _identity_check(row:pd.Series,policy:dict)->tuple[bool,list[str],dict[str,An
     if ratio is None:blockers.append('ECONOMIC_IDENTITY_UNVERIFIABLE')
     elif not lo<=ratio<=hi:blockers.append(f'ECONOMIC_IDENTITY_{identity_method}_UNIT_MISMATCH')
     if not str(row.get('underlying_ticker') or '').strip():blockers.append('ECONOMIC_IDENTITY_UNDERLYING_MISSING')
-    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); normalization_verified=bool(row.get('economic_unit_normalization_verified',False)) or adr_verified
+    # A live FX correction (fx_verified) is as legitimate a form of verified
+    # normalization as a verified ADR ratio: it's only ever populated from a
+    # real reporting currency (Finnhub) combined with a real live market
+    # rate (Yahoo), never fabricated -- see _resolve_fx_to_market. The
+    # numeric ratio bounds check above is still the primary gate; this only
+    # relaxes these two secondary checks when identity is independently
+    # confirmed some other way (ADR ratio, dual-class ratio, or FX).
+    target=str(row.get('target_price_unit') or 'UNDERLYING_SECURITY').upper(); eps_unit=str(row.get('eps_unit') or 'UNDERLYING_SECURITY').upper(); normalization_verified=bool(row.get('economic_unit_normalization_verified',False)) or adr_verified or fx_verified
     if target!=eps_unit and not normalization_verified:blockers.append('ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH')
     country=str(row.get('issuer_country_normalized') or row.get('country_of_origin') or '').upper(); market=str(row.get('underlying_market_official') or row.get('underlying_market') or '').upper(); non_us=country not in ('','US','USA','UNITED STATES','ESTADOS UNIDOS')
     us_traded=market in ('NEW YORK','NYSE','NASDAQ','NASDAQ GS','NASDAQ GM','NASDAQ CM')
     if non_us and us_traded and not normalization_verified:
         blockers.append('FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED'); flags.append('ADR_OR_FOREIGN_SHARE_NORMALIZATION_REQUIRED')
+    if fx_verified:flags.append('VERIFIED_FX_CORRECTION_APPLIED')
     if adr_verified and security_type=='ADS_ADR' and adr!=1.0:flags.append('VERIFIED_ADR_RATIO_APPLIED')
     if adr_verified and security_type=='ADS_ADR' and adr==1.0 and non_us:flags.append('VERIFIED_FOREIGN_SECURITY_1_TO_1_MAPPING_APPLIED')
     if adr_verified and security_type=='DOMESTIC_DUAL_CLASS':

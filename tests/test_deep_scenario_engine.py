@@ -3,7 +3,7 @@ import pytest
 from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
- 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
+ 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'},'PAGS':{'ordinary_shares_per_us_traded_share':1,'security_type':'NYSE_LISTED_CLASS_A_COMMON_SHARE','source':'PAGSEGURO_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
@@ -191,6 +191,43 @@ def test_eps_pe_miss_not_rescued_when_pb_also_fails():
  assert not r['scenario_validated']
  assert 'ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH' in r['scenario_review_blockers']
  assert 'ECONOMIC_IDENTITY_PB_CORROBORATION_RESCUES_EPS_PE_MISS' not in r['identity_flags']
+
+def test_eric_verified_fx_correction_reconciles_currency_mismatch():
+ # Real Ericsson data found 2026-09-14: both EPS/PE (9.41x) and PB (8.79x)
+ # ratios come out consistently ~9-9.4x too high with no FX applied -- the
+ # signature of a currency mismatch (Finnhub reports ERIC's fundamentals in
+ # SEK while the ADR trades in USD), confirmed against the real USD/SEK
+ # rate that day (~9.7675). fundamental_fx_to_market is populated upstream
+ # by equity_engine.py's live FX lookup (never guessed) -- this test feeds
+ # that already-resolved value straight to the identity check, same as an
+ # ADR ratio would be.
+ row=_row('ERIC',10.31,14.45367,10.45143,7.10838,8.5063,11.4051,.148,.8,.3676,underlying_ticker='ERIC',issuer_country_normalized='SE',underlying_market_official='NASDAQ GS',fundamental_fx_to_market=1.0/9.7675)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['identity_implied_to_market_ratio']==pytest.approx(0.9631,rel=1e-3)
+ assert 'VERIFIED_FX_CORRECTION_APPLIED' in r['identity_flags']
+ assert 'FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED' not in r['scenario_review_blockers']
+
+def test_pags_verified_fx_correction_combines_with_existing_adr_normalization():
+ # Real PagSeguro data found 2026-09-14: same currency-mismatch shape as
+ # ERIC (BRL vs. USD), on a ticker that already had a verified 1:1 direct
+ # foreign listing on file from a prior session -- confirms the FX
+ # correction and the ADR/direct-listing mechanism compose correctly
+ # rather than conflicting.
+ row=_row('PAGS',10.12,14.70,12.24,7.777,7.1118,6.789,.1585,.7625,.1718,underlying_ticker='PAGS',issuer_country_normalized='BR',underlying_market_official='New York',fundamental_fx_to_market=1.0/5.1627)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['identity_implied_to_market_ratio']==pytest.approx(0.9241,rel=1e-3)
+ assert 'VERIFIED_FX_CORRECTION_APPLIED' in r['identity_flags']
+
+def test_fx_correction_present_does_not_bypass_a_genuinely_bad_ratio():
+ # Negative control: fundamental_fx_to_market being populated must not
+ # itself waive the numeric ratio check -- if the resulting ratio is still
+ # out of band (e.g. a wrong or irrelevant FX value), it must still block.
+ row=_row('BADFX',100,140,120,90,45,15,.05,underlying_ticker='BADFX',issuer_country_normalized='SE',underlying_market_official='NASDAQ GS',fundamental_fx_to_market=1.0)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert not r['scenario_validated']
+ assert 'ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH' in r['scenario_review_blockers']
 
 def test_probabilities_are_dynamic():
  a=_row('AAA',100,130,110,80,5,20,.10,.9); b=_row('BBB',100,130,110,80,5,20,.10,.3); out,_=validate_scenarios(pd.DataFrame([a,b]),POLICY); assert out.iloc[0]['bull_probability']!=out.iloc[1]['bull_probability']
