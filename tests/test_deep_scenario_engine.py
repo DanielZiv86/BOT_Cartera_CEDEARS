@@ -3,7 +3,7 @@ import pytest
 from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
- 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
+ 'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
  'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
@@ -154,6 +154,43 @@ def test_missing_identity_fundamentals_fail_closed_never_fabricate():
 def test_rds_verified_two_share_ads_and_extreme_consensus_cap():
  out,_=validate_scenarios(pd.DataFrame([_row('RDS',95.32,199.24,110.99,84.38,4,11.9,.08,.65,.55,sector='',issuer_country_normalized='GB',underlying_market_official='New York',fundamental_fcf_yield=.08,fundamental_dividend_yield=.04)]),POLICY); r=out.iloc[0]
  assert r['identity_adr_ratio_applied']==2 and r['scenario_validated']; assert r['bull_target_price']<=95.32*1.60
+
+def test_ten_verified_two_for_one_ads_reconciles_tenaris_identity():
+ # Real Tenaris (TEN/TS) data found 2026-09-14: without an ADR ratio, the
+ # implied identity ratio is 0.499 (eps*pe/price), just below the 0.55
+ # floor. Tenaris's own investor relations page states 1 ADS = 2 ordinary
+ # shares (unchanged since a 2006 board-approved change from the original
+ # 10:1, documented in Tenaris's SEC Form 6-K FY2006) -- applying it brings
+ # the ratio to 0.999, essentially a perfect match.
+ out,_=validate_scenarios(pd.DataFrame([_row('TEN',57.39,85.314705,63.058644,51.141653,1.8304,15.6591,-.0541,.7925,.027,underlying_ticker='TS',issuer_country_normalized='LU',underlying_market_official='New York')]),POLICY); r=out.iloc[0]
+ assert r['identity_adr_ratio_applied']==2 and r['scenario_validated'], r['scenario_review_blockers']
+ assert r['identity_implied_to_market_ratio']==pytest.approx(0.9988645,rel=1e-5)
+
+def test_hon_eps_pe_miss_rescued_by_pb_corroboration():
+ # Real Honeywell data found 2026-09-14: EPS/PE ratio is 0.493 (just below
+ # the 0.55 floor -- EPS-normalization noise, likely from a recent
+ # portfolio restructuring, not a real unit/scale mismatch), but the
+ # independent book-value/price-to-book ratio is 0.964, cleanly inside the
+ # band. HON is a purely domestic, single-class stock -- no ADR or
+ # dual-class ratio applies -- so the fix is architectural: corroborate
+ # with PB before blocking on a borderline EPS/PE miss.
+ row=_row('HON',202.36,514.5,281.52,239.37,7.9947,12.4802,.0322,.8,2.2396,fundamental_book_value_per_share=24.3193,fundamental_price_to_book=8.022,fundamental_roe=33.28)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['economic_identity_method']=='PB'
+ assert 'ECONOMIC_IDENTITY_PB_CORROBORATION_RESCUES_EPS_PE_MISS' in r['identity_flags']
+ assert r['identity_implied_to_market_ratio']==pytest.approx(0.964071,rel=1e-5)
+
+def test_eps_pe_miss_not_rescued_when_pb_also_fails():
+ # Negative control: the PB-corroboration rescue must not fire when BOTH
+ # ratios are out of band -- that's a real unit-scale mismatch (like TEN
+ # without its ADR ratio, or ERIC's currency mismatch), not EPS-metric
+ # noise, and must still fail closed.
+ row=_row('BADID',100,140,120,90,45,15,.05,fundamental_book_value_per_share=500,fundamental_price_to_book=1.3)
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert not r['scenario_validated']
+ assert 'ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH' in r['scenario_review_blockers']
+ assert 'ECONOMIC_IDENTITY_PB_CORROBORATION_RESCUES_EPS_PE_MISS' not in r['identity_flags']
 
 def test_probabilities_are_dynamic():
  a=_row('AAA',100,130,110,80,5,20,.10,.9); b=_row('BBB',100,130,110,80,5,20,.10,.3); out,_=validate_scenarios(pd.DataFrame([a,b]),POLICY); assert out.iloc[0]['bull_probability']!=out.iloc[1]['bull_probability']
