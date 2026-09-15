@@ -1,0 +1,108 @@
+methodology_version: TRIAGE-1.0
+default_bucket: uncatalogued_blocker_needs_triage_update
+
+# Every code here was found as a real `blockers.append(...)` string in
+# src/valuation/{deep_scenario_engine,equity_engine,etf_engine,
+# etf_issuer_engine,non_equity_tracker_engine,index_etf_engine,g4}.py --
+# nothing invented, all copied from the actual codebase. A blocker code NOT
+# listed here falls into default_bucket above rather than silently landing
+# in "no action needed" -- fail-closed, same discipline as the rest of the
+# project: an unrecognized code must demand attention, not be assumed safe.
+buckets:
+  identity_verification_needed:
+    action: >
+      Same pattern as TEN/ARM/BRKB this session: a real ADR, dual-class or
+      FX ratio is missing or unverified for this ticker. Investigate the
+      real ratio against an official primary source (issuer investor
+      relations page, SEC filing) -- never guess or infer it from the
+      numeric ratio looking close to in-band -- then add it to
+      config/scenario_review_policy.yml's verified_adr_ratios /
+      verified_direct_foreign_listings / verified_domestic_dual_class_ratios.
+    blocker_codes:
+      - ECONOMIC_IDENTITY_EPS_PE_UNIT_MISMATCH
+      - ECONOMIC_IDENTITY_PB_UNIT_MISMATCH
+      - FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED
+      - ECONOMIC_IDENTITY_TARGET_EPS_UNIT_MISMATCH
+      - ECONOMIC_IDENTITY_UNVERIFIABLE
+    diagnostic_fields:
+      - identity_implied_to_market_ratio
+      - identity_implied_price
+      - identity_flags
+      - identity_adr_ratio_applied
+      - identity_adr_ratio_verified
+      - issuer_country_normalized
+      - underlying_market_official
+      - fundamental_reporting_currency
+      - fundamental_fx_to_market
+
+  connector_investigation_needed:
+    action: >
+      Same pattern as the Vanguard holdings-API fix this session: an
+      upstream data source has likely gone stale or changed shape. Fetch
+      the real page/endpoint directly, confirm whether it's genuinely stale
+      or the connector broke, and fix the connector against the real
+      current source -- never fabricate a holdings/price snapshot.
+    blocker_codes:
+      - ETF_HOLDINGS_STALE
+      - ETF_HOLDINGS_MISSING
+      - ETF_HOLDINGS_FRESHNESS_UNKNOWN
+      - PRICE_TARGET_STALE
+      - PRICE_TARGET_FRESHNESS_UNKNOWN
+      - ISSUER_NAV_STALE
+      - ISSUER_NAV_FRESHNESS_UNKNOWN
+      - ISSUER_NAV_MISSING_OR_INVALID
+    diagnostic_fields:
+      - etf_holdings_age_days
+      - etf_holdings_max_age_days_applied
+      - etf_holdings_date
+      - holdings_provider
+      - holdings_source_tier
+      - price_target_age_days
+      - price_target_last_updated
+      - issuer_nav_age_days
+      - issuer_nav_date
+
+  sector_classification_needed:
+    action: >
+      Same pattern as the sector taxonomy Fase A/B work: confirm
+      industry_sector_official is actually populated and merged in for this
+      ticker (a merge/plumbing gap, like the one found and fixed for
+      existing-holdings stress this session, is more likely than a genuinely
+      new sector). Only propose a new archetype if real data across several
+      tickers in the same sector shows the existing formula is a poor fit --
+      don't build one for a single ticker.
+    blocker_codes:
+      - SECTOR_CLASSIFICATION_UNVERIFIED
+    diagnostic_fields:
+      - industry_sector_official
+      - industry_sector_source
+      - sector
+      - scenario_sector_model
+
+  insufficient_market_data:
+    action: >
+      A real data gap, not a pipeline bug -- e.g. too few analysts cover the
+      name, or a fresh listing has no price-target history yet. No fix is
+      expected; it may resolve on its own as real coverage improves. Only
+      worth re-flagging if it persists for many consecutive cycles.
+    blocker_codes:
+      - INSUFFICIENT_ANALYST_COVERAGE
+      - CURRENT_PRICE_MISSING
+      - PRICE_TARGET_FIELDS_MISSING
+      - PRICE_TARGET_ORDER_INVALID
+      - CONSENSUS_DISTRIBUTION_MISSING
+      - ECONOMIC_IDENTITY_UNDERLYING_MISSING
+      - ETF_LOOKTHROUGH_COVERAGE_INSUFFICIENT
+      - ETF_VALID_HOLDINGS_INSUFFICIENT
+      - FUNDAMENTAL_SCENARIO_ORDER_INVALID
+      - NON_EQUITY_SCENARIO_TARGETS_MISSING_OR_INVALID
+      - NON_EQUITY_SCENARIO_PROBABILITIES_INVALID
+      - ETF_SCENARIO_ORDER_INVALID
+      - INDEX_ETF_MODEL_INPUT_INVALID
+      - TRACKER_SCENARIO_POLICY_INVALID
+      - TRACKER_SCENARIO_ORDER_INVALID
+    diagnostic_fields:
+      - analyst_count
+      - price_target_age_days
+      - etf_analyzed_holding_count
+      - etf_valid_holding_count

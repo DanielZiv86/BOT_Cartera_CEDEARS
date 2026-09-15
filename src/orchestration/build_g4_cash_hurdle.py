@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse,json
 from datetime import datetime,timezone
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -24,12 +25,31 @@ def _load(path):
     raise ValueError(f'Unsupported input: {p}')
 
 
+def _to_str_list(x):
+    # `--certified-scenario-review` loads deep_scenario_review_v2_1.parquet
+    # via pd.read_parquet, which round-trips a list-typed column back as a
+    # numpy.ndarray per cell, not a native Python list -- confirmed by
+    # direct reproduction (`pd.DataFrame([...]).to_parquet(...)` then
+    # `pd.read_parquet(...)`). `isinstance(x, list)` is False for that
+    # ndarray, so the old check fell through to `[str(x)]`, turning a real
+    # blocker list into one bogus stringified-array "blocker" (explains the
+    # literal `'[]'` key seen in production's scenario_blocker_counts for a
+    # clean run) and separately wiped real blockers to `[]` in the
+    # normalization loop below -- silently destroying the one field this
+    # bot needs to diagnose why a ticker is BLOCKED_BY_DATA. Found 2026-09-14
+    # while building the G4 blocker triage tool, which reads exactly this
+    # field.
+    if isinstance(x,(list,tuple,np.ndarray)):return [str(v) for v in list(x)]
+    if x is None or (isinstance(x,float) and pd.isna(x)):return []
+    return [str(x)]
+
+
 def _certified_review_metrics(reviewed, scenario_methodology_version='SCENARIO-2.2'):
     validated=reviewed.get('scenario_validated',pd.Series(False,index=reviewed.index)).fillna(False).astype(bool)
     blockers={}
     if 'scenario_review_blockers' in reviewed.columns:
         for raw in reviewed['scenario_review_blockers']:
-            vals=raw if isinstance(raw,list) else ([] if raw is None or (isinstance(raw,float) and pd.isna(raw)) else [str(raw)])
+            vals=_to_str_list(raw)
             for b in vals:
                 b=str(b).strip()
                 if b: blockers[b]=blockers.get(b,0)+1
@@ -100,7 +120,7 @@ def main():
     result,review_metrics=apply_extreme_target_review(result,reviewed,raw); result=_execution(result,local); metrics=_govern({**metrics,**scenario_metrics,**review_metrics}); metrics['analysis_ready_count']=int(result.get('analysis_ready',pd.Series(dtype=bool)).sum());metrics['execution_ready_count']=int(result.get('execution_ready',pd.Series(dtype=bool)).sum())
     out=Path(a.output_dir);out.mkdir(parents=True,exist_ok=True); reviewed_json=reviewed.copy()
     for c in ('blockers','scenario_review_blockers','scenario_review_flags'):
-        if c in reviewed_json:reviewed_json[c]=reviewed_json[c].map(lambda x:x if isinstance(x,list) else [])
+        if c in reviewed_json:reviewed_json[c]=reviewed_json[c].map(_to_str_list)
     reviewed_json.to_json(out/'scenario_review.json',orient='records',indent=2,force_ascii=False); json_df=result.copy()
     for c in ('blockers','target_review_flags'):
         if c in json_df:json_df[c]=json_df[c].map(lambda x:x if isinstance(x,list) else [])

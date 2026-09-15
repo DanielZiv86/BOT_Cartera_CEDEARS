@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.orchestration.build_g4_cash_hurdle import _add_execution_gate, _apply_global_governance
+import numpy as np
+
+from src.orchestration.build_g4_cash_hurdle import _add_execution_gate, _apply_global_governance, _certified_review_metrics, _to_str_list
 from src.valuation.g4 import G4Policy, calculate_g4_cash_hurdle
 from src.valuation.g4_review import apply_extreme_target_review
 
@@ -239,3 +241,36 @@ def test_execution_gate_remains_fail_closed_without_executable_book():
     out = _add_execution_gate(economic, local)
     assert not bool(out.iloc[0]["execution_ready"])
     assert out.iloc[0]["execution_gate_status"] == "NOT_EXECUTION_READY"
+
+
+def test_to_str_list_survives_a_real_parquet_round_trip_not_just_native_lists():
+    # Real bug found 2026-09-14 while building the G4 blocker triage tool:
+    # pd.read_parquet returns a list-typed column back as numpy.ndarray per
+    # cell, not a native Python list -- confirmed by reproducing the exact
+    # round trip below. The old `isinstance(x, list)` check silently turned
+    # every real blocker list into either `[]` or a single bogus stringified
+    # array (this is why production's scenario_blocker_counts showed the
+    # literal string key "[]" instead of an empty dict).
+    df = pd.DataFrame([
+        {"cedear_ticker": "ARM", "scenario_review_blockers": ["FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED"]},
+        {"cedear_ticker": "NVDA", "scenario_review_blockers": []},
+    ])
+    tmp_path = "/tmp/test_g4_blocker_roundtrip.parquet"
+    df.to_parquet(tmp_path, index=False)
+    reloaded = pd.read_parquet(tmp_path)
+    assert isinstance(reloaded["scenario_review_blockers"].iloc[0], np.ndarray)  # confirms the round-trip really does corrupt the dtype
+    assert _to_str_list(reloaded["scenario_review_blockers"].iloc[0]) == ["FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED"]
+    assert _to_str_list(reloaded["scenario_review_blockers"].iloc[1]) == []
+
+
+def test_certified_review_metrics_counts_real_blockers_after_parquet_round_trip():
+    df = pd.DataFrame([
+        {"cedear_ticker": "ARM", "scenario_validated": False, "scenario_review_blockers": ["FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED"]},
+        {"cedear_ticker": "NVDA", "scenario_validated": True, "scenario_review_blockers": []},
+    ])
+    tmp_path = "/tmp/test_g4_blocker_metrics_roundtrip.parquet"
+    df.to_parquet(tmp_path, index=False)
+    reloaded = pd.read_parquet(tmp_path)
+    metrics = _certified_review_metrics(reloaded)
+    assert metrics["scenario_blocker_counts"] == {"FOREIGN_TRADED_SECURITY_UNIT_NORMALIZATION_UNVERIFIED": 1}
+    assert "[]" not in metrics["scenario_blocker_counts"]
