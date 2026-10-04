@@ -4,7 +4,7 @@ from src.valuation.deep_scenario_engine import validate_scenarios
 
 POLICY={
  'methodology_version':'SCENARIO-2.2','identity':{'eps_pe_to_price_ratio_min':.55,'eps_pe_to_price_ratio_max':1.80,'verified_adr_ratios':{'BBV':{'ordinary_shares_per_ads':1,'source':'BBVA_OFFICIAL'},'HSBC':{'ordinary_shares_per_ads':5,'source':'HSBC_OFFICIAL'},'ING':{'ordinary_shares_per_ads':1,'source':'ING_OFFICIAL'},'SAN':{'ordinary_shares_per_ads':1,'source':'SAN_OFFICIAL'},'EQNR':{'ordinary_shares_per_ads':1,'source':'EQNR_OFFICIAL'},'RDS':{'ordinary_shares_per_ads':2,'source':'SHELL_OFFICIAL'},'TXR':{'ordinary_shares_per_ads':10,'source':'TERNIUM_OFFICIAL'},'VOD':{'ordinary_shares_per_ads':10,'source':'VODAFONE_OFFICIAL'},'TEN':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'TS':{'ordinary_shares_per_ads':2,'source':'TENARIS_OFFICIAL'},'ARM':{'ordinary_shares_per_ads':1,'source':'ARM_OFFICIAL'}},'verified_direct_foreign_listings':{'AEG':{'ordinary_shares_per_us_traded_share':1,'security_type':'NEW_YORK_REGISTRY_SHARE','source':'AEGON_OFFICIAL'},'PAGS':{'ordinary_shares_per_us_traded_share':1,'security_type':'NYSE_LISTED_CLASS_A_COMMON_SHARE','source':'PAGSEGURO_OFFICIAL'}},'verified_domestic_dual_class_ratios':{'BRKB':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'},'BRK/B':{'reference_class_shares_per_traded_share':0.0006666667,'source':'BERKSHIRE_OFFICIAL'}}},
- 'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE'},
+ 'sector_overrides':{'RDS':'ENERGY','SHEL':'ENERGY','V':'CORPORATE','MA':'CORPORATE','BRKB':'FINANCIALS','BRK/B':'FINANCIALS','SPGI':'FINANCIALS','ADP':'CORPORATE','RTX':'CORPORATE','GOOGL':'CORPORATE','ABNB':'CONSUMER_CYCLICAL'},
  'sector_classification':{'corporate_keywords':['TECHNOLOGY','SOFTWARE','SEMICONDUCTOR','HEALTH','PHARMA','CONSUMER','INDUSTRIAL','MATERIAL','COMMUNICATION','TELECOM','UTILITY','REAL ESTATE','AEROSPACE','TRANSPORT','RETAIL','FOOD','BEVERAGE']},
  'corporate':{'consensus_base_blend':.20,'consensus_bear_blend':.20,'bear_eps_compression':.18,'bear_multiple_factor':.78,'base_pe_floor':6,'pe_cap_base':15,'pe_cap_growth_sensitivity':1.5,'pe_cap_ceiling':55,'bull_multiple_factor':1.12,'base_growth_floor':-.10,'base_growth_cap':.20,'bull_growth_floor':.08,'bull_growth_increment':.08,'bull_growth_cap':.30},
  'financials':{'roe_floor':.04,'roe_cap':.22,'cost_of_equity_anchor':.10,'base_pb_anchor':1,'roe_pb_sensitivity':3,'base_pb_floor':.45,'base_pb_cap':4.0,'observed_pb_weight':.65,'fair_pb_weight':.35,'consensus_base_blend':.2,'bear_pb_factor':.72,'bear_pb_floor':.35,'bull_pb_factor':1.2,'bull_pb_cap':5.0,'minimum_bull_premium_to_base':.10,'consensus_bear_blend':.20},
@@ -407,3 +407,20 @@ def test_spgi_style_override_wins_over_new_consumer_non_cyclical_auto_classifica
  row=_row('SPGI',500,650,560,420,20,25,.10,.7,sector='Consumer, Non-cyclical',fundamental_book_value_per_share=8,fundamental_price_to_book=62.5,fundamental_roe=55)
  out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
  assert r['scenario_sector_model']=='FINANCIALS'; assert r['scenario_sector_source']=='POLICY_OVERRIDE'
+
+def test_abnb_override_fixes_empty_comafi_sector_field_real_data():
+ # Real data found 2026-09-25: ABNB entered the Top-30 for the first time
+ # and broke valuation_scenarios.yml's certification step -- the only
+ # equity that week with an empty scenario_sector_model
+ # (SECTOR_CLASSIFICATION_UNVERIFIED), because its universe row's
+ # industry_sector_official is an empty string at the Comafi-catalogue
+ # level (same class of gap as BRKB/SPGI/ADP/RTX/GOOGL above), which
+ # broke a hard CI-style assertion and failed the whole weekly chain.
+ # Confirmed publicly: GICS Consumer Discretionary / "Hotels, Resorts &
+ # Cruise Lines" -- routed to CONSUMER_CYCLICAL, the archetype this
+ # project already defined for discretionary/cyclical consumer names.
+ row=_row('ABNB',149.58,231.0,193.5144,126.25,4.0305,36.1012,.1313,.8,.2438,sector='')
+ out,_=validate_scenarios(pd.DataFrame([row]),POLICY); r=out.iloc[0]
+ assert r['scenario_sector_model']=='CONSUMER_CYCLICAL'; assert r['scenario_sector_source']=='POLICY_OVERRIDE'
+ assert r['scenario_validated'], r['scenario_review_blockers']
+ assert r['bear_target_price']<r['base_target_price']<r['bull_target_price']

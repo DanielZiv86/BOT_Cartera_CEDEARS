@@ -148,6 +148,18 @@ sector_overrides:
   ADP: CORPORATE
   RTX: CORPORATE
   GOOGL: CORPORATE
+  # Found 2026-09-25: ABNB entered the Top-30 for the first time and broke
+  # valuation_scenarios.yml's certification step -- the only equity in that
+  # week's Top-30 with an empty scenario_sector_model (SECTOR_CLASSIFICATION_
+  # UNVERIFIED), because its universe row's industry_sector_official is an
+  # empty string at the Comafi-catalogue level (same class of gap as BRKB/
+  # SPGI/ADP/RTX/GOOGL above -- not a keyword-matching issue, the text-based
+  # classification never runs when the field is missing). Confirmed publicly:
+  # GICS Consumer Discretionary / "Hotels, Resorts & Cruise Lines" (Airbnb is
+  # a travel/hospitality booking platform) -- routed to CONSUMER_CYCLICAL,
+  # the archetype this project already defined for discretionary/cyclical
+  # consumer names (its own policy_notes cite "retail, autos, travel").
+  ABNB: CONSUMER_CYCLICAL
 
 corporate:
   base_growth_floor: -0.10
