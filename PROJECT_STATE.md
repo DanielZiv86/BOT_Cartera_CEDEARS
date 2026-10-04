@@ -1,8 +1,8 @@
 # BOT Cartera CEDEARS — Project State
 
-_Last updated: 2026-09-15 (session paused here, nothing mid-flight)_
+_Last updated: 2026-10-04 (GitHub Actions removed; see new section below)_
 
-**Session recap for continuity**: sessions of 2026-09-11, 09-12 and 09-14 (see summaries below) took the pipeline from "G4 never produces a PASS" through the mandate rewrite, Fase 2 selection-order cutover, sector taxonomy Fase A, a string of real per-ticker data-identity fixes (VIG, BRKB, TEN, HON, ARM, live FX for PAGS/ERIC), a real portfolio-snapshot reconciliation against the user's actual Balanz statement, and finally an automatic triage mechanism for future G4 blockers (PRs #35/#36) -- all merged to `main`, nothing open or half-done. Production as of this pause: NAV $49,615.61 (8 real CEDEAR positions), `g4_blocked_count=0`, 4/30 G4_PASS (NVDA, AMZN, GE, LLY), Committee decision `CANDIDATES_REQUIRE_EXECUTION_GATE`. See "Open items for next session" at the bottom for the only two (non-blocking) carry-overs.
+**Session recap for continuity**: sessions of 2026-09-11, 09-12 and 09-14 (see summaries below) took the pipeline from "G4 never produces a PASS" through the mandate rewrite, Fase 2 selection-order cutover, sector taxonomy Fase A, a string of real per-ticker data-identity fixes (VIG, BRKB, TEN, HON, ARM, live FX for PAGS/ERIC), a real portfolio-snapshot reconciliation against the user's actual Balanz statement, and finally an automatic triage mechanism for future G4 blockers (PRs #35/#36) -- all merged to `main`, nothing open or half-done. Through 2026-10-02, the weekly Routine kept the pipeline running autonomously on real data (see the 2026-09-18/09-25/10-02 summaries below) -- last real result: NAV ~$49,087, 3/30 G4_PASS (AMZN, GE, MSFT), 1 blocked (CIBR), Committee `CANDIDATES_REQUIRE_EXECUTION_GATE`, goal pace `NEW_DEPLOYMENT_BELOW_PACE` (required ~19.2%/yr vs. ~9.75%/yr from this cycle's new deployment). **On 2026-10-04, all 18 GitHub Actions workflows and both scheduled Routines were removed at Daniel's explicit request** (he needed the Actions capacity for another project) -- see "GitHub Actions removed" section below. The pipeline's Python code is untouched and still fully functional; it just has no automated trigger or CI runner anymore. See "Open items for next session" at the bottom.
 
 ## Objective
 
@@ -201,12 +201,68 @@ Also confirmed via `list_workflows` that `value_research_shadow.yml`/`value_rese
 - **Fixed**: verified ABNB's real classification via SEC EDGAR + GICS data (Consumer Discretionary / "Hotels, Resorts & Cruise Lines" -- a travel/hospitality booking platform), added `ABNB: CONSUMER_CYCLICAL` to `sector_overrides`. Validated locally against the actual failed run's real data (assertion fails before the fix, passes after; ABNB reaches a full plausible Bear $84.70/Base $161.61/Bull $184.24 scenario) and via the full real chain on the feature branch (all green, though ABNB itself had rotated out of that particular re-run's Top-30 by normal weekly variance, so the live chain confirms no regressions rather than re-exercising the exact same row). New regression test in `tests/test_deep_scenario_engine.py`. **Opened as PR #38, awaiting the user's explicit merge approval** -- not yet merged as of this writing.
 - This is a new failure *mode* worth remembering: unlike a `BLOCKED_BY_DATA` ticker (individually excluded, everything else proceeds), a missing `scenario_sector_model` on a newly-selected equity can abort the *entire* weekly chain outright. The `sector_overrides` fix pattern (verify real classification, add the override) is the same either way, but this one needs a PR the moment it's found, not a routine triage-bucket entry -- there's no G4/Committee output to even look at until the chain itself is unblocked.
 
-## Open items for next session (updated 2026-09-25)
+## Session 2026-10-02 firing, then GitHub Actions removed entirely (2026-10-04)
 
-1. **PR #38 awaiting explicit merge approval.** The ABNB `sector_overrides` fix (2026-09-25 firing, see above) is open, validated, ready -- needs Daniel's explicit "sí, mergeá" before merging, per the repo's standing rule. Once merged, reset the feature branch to `main` (`git fetch && git checkout -B claude/modest-maxwell-xnwsfi origin/main && git push --force-with-lease`), same as every prior PR this session.
-2. **G4 blocker triage tool has a real structural gap, awaiting a decision.** Asked the user on 2026-09-18 whether to extend `src/orchestration/build_g4_blocker_triage.py` to also cover G4's own local-market/execution-readiness blockers (`g4_cash_hurdle.json`'s `blockers`, e.g. `LOCAL_MARKET_GATE_BLOCKED` -- currently invisible to the triage, which only reads `scenario_review.json`), or to first confirm MU's specific case (unverified Comafi ratio + no recoverable local BYMA quote) is a genuine data-availability gap rather than a bug. No response yet as of 2026-09-25. Don't extend the triage's scope unilaterally without an answer -- this is a real design decision (what counts as "in scope" for automatic response), not a routine bucket classification.
-3. **Stale Routine, minor cleanup, not urgent.** The "Weekly value-first shadow check" Routine (`trig_01WDQG2usnUgpnmQpQywBAGD`) still targets `value_research_shadow.yml`, which was deleted 2026-09-14 ("Shadow workflows retired" above) -- confirmed via `list_workflows` on 2026-09-18 that it's genuinely gone from `main`. The Routine fails/no-ops every Friday 22:00 UTC until deleted or repointed. Harmless (doesn't touch production data), just noise. Offered to delete it twice (2026-09-18, still no response) -- delete via `delete_trigger` once the user confirms, don't do it unilaterally since they created it.
-4. **Routine monitoring, ongoing.** The "Weekly CEDEAR pipeline check-in" Routine (`trig_018h97kx8AcaBsDuSvFfN2NF`, next fires 2026-10-02 20:00 UTC) has now handled one all-clean firing, one real `BLOCKED_BY_DATA` case outside its current scope (item 2 above), and one full chain failure it root-caused and fixed itself (item 1 above, PR #38). Keep watching -- it's proving itself on real cases, not just the clean-run path it was originally validated against.
+### 2026-10-02 firing (last real automated run)
+
+PR #38 (ABNB fix) was merged 2026-10-04 by explicit "sí, mergeá", but the 2026-10-02
+Routine firing itself ran against `main` **before** that merge (ABNB's override
+wasn't live yet) -- it didn't matter this cycle because ABNB wasn't in that week's
+Top-30. Full chain green: `weekly_screening.yml` -> `valuation_scenarios.yml`
+(`dispatch_g4=true`) -> G4 -> Risk -> Committee, all success. Results: **3/30
+G4_PASS** (AMZN, GE, MSFT -- down from 4; FB dropped out, normal weekly variance),
+**1 blocked**: **CIBR**, `LOCAL_MARKET_GATE_BLOCKED` / `ratio_status=RATIO_UNVERIFIED_COMAFI`
+-- **the same structural gap-class as MU (2026-09-18), confirming it's a recurring
+pattern, not a one-off**: a G4-level (not Deep-Scenario-Review-level) blocker,
+invisible to `g4_blocker_triage.json` (which came back empty, `triaged_count=0`,
+because the triage tool only reads `scenario_review.json`). Committee:
+`CANDIDATES_REQUIRE_EXECUTION_GATE` / `G4_PASS_RISK_PASS`, `risk_veto=NO`.
+`goal_tracking`: `goal_required_annual_return=19.22%`,
+`goal_new_deployment_weighted_expected_return=9.75%`, `NEW_DEPLOYMENT_BELOW_PACE`
+-- confirms the open structural tension already known: the deployment the pipeline
+actually finds each week is paced well below what the $20k/24mo goal needs.
+This is the second real data point for open item 2 below (MU/CIBR triage-scope
+question) -- still unresolved, now with stronger evidence it recurs.
+
+### GitHub Actions removed entirely (2026-10-04)
+
+Daniel asked to remove all GitHub Actions workflows from this repo, needing the
+Actions capacity (concurrent job slots/minutes) for a different project on the same
+account -- explicitly not a judgment that the pipeline was wrong or finished (it was
+working end-to-end on real data right up to the 2026-10-02 firing above).
+
+1. **All 18 `.github/workflows/*.yml` files deleted**, full content backed up verbatim
+   in **`docs/archived_github_actions.md`** (with a description of what each did, the
+   production dependency order, the secrets each needed, and restore instructions).
+   Nothing in `src/`, `config/` or `tests/` was touched -- the pipeline's actual logic
+   is fully intact and still passes `pytest -q`, it just has no CI runner or scheduled
+   trigger driving it anymore.
+2. **Both scheduled Routines deleted** (`trig_018h97kx8AcaBsDuSvFfN2NF` "Weekly CEDEAR
+   pipeline check-in" and the already-stale `trig_01WDQG2usnUgpnmQpQywBAGD` "Weekly
+   value-first shadow check") -- both would have failed every firing with nothing to
+   dispatch, per Daniel's explicit instruction to remove both.
+3. **`CLAUDE.md`'s standing validation rule updated**: it used to require validating
+   economic/policy changes via the real GitHub Actions chain dispatched on the
+   feature branch. That path no longer exists -- the rule now points at running the
+   same orchestration scripts locally, in the same dependency order, against real
+   data (never synthetic), with `docs/archived_github_actions.md` as the reference
+   for each step's exact CLI invocation.
+4. **No pipeline runs automatically anymore.** The weekly cadence, the G4 blocker
+   triage's weekly response loop, and the whole "nothing needs to be asked, the
+   Routine just handles it" autonomy built up over the prior sessions are all paused
+   until the Actions chain (or an equivalent runner) is restored. Next session should
+   not assume the pipeline has kept running in the background.
+
+## Open items for next session (updated 2026-10-04)
+
+1. **No automation is running.** The pipeline must be driven manually now (either by
+   re-running the archived GitHub Actions workflows if/when Actions capacity frees up
+   again -- see `docs/archived_github_actions.md` -- or by running the orchestration
+   scripts locally in dependency order). Don't assume a Routine will catch a data
+   problem; nothing is watching the pipeline right now.
+2. **G4 blocker triage tool has a real structural gap, now confirmed twice, still awaiting a decision.** `src/orchestration/build_g4_blocker_triage.py` only reads `scenario_review.json` (Deep Scenario Review's own blockers), never `g4_cash_hurdle.json`'s separate local-market/execution-readiness blockers (`src/valuation/g4.py`'s own gate: `LOCAL_MARKET_GATE_BLOCKED`, `RATIO_MISSING_OR_INVALID`, `MARKET_CCL_MISSING`, etc.). First seen with MU (2026-09-18), seen again with CIBR (2026-10-02, same `LOCAL_MARKET_GATE_BLOCKED`/`RATIO_UNVERIFIED_COMAFI` signature) -- this is clearly a recurring category, not a one-off. Still awaiting Daniel's decision on whether to extend the triage's scope to cover it. Don't extend it unilaterally without an answer.
+3. **The pace-vs-goal gap is real and persistent.** Every real check-in from 2026-09-11 onward has shown `NEW_DEPLOYMENT_BELOW_PACE` (most recently: 9.75%/yr vs. a required 19.22%/yr). This has never been treated as a code bug -- it's an honest reflection of what the disciplined pipeline actually finds each week -- but it means that, absent a change in approach, the $20k/24mo goal is not on track at the current real-world pace. Worth a direct conversation with Daniel about tradeoffs if/when the pipeline resumes running.
+4. **Everything else is as it was on 2026-09-25**: no open PRs, no sector-taxonomy work pending (Fase A done, Fase B declined on weak evidence), no FX/bear-threshold work pending.
 
 No FX/regulatory or bear-downside threshold work is pending -- those are considered settled (see permanent safeguards below for why they were loosened, so they aren't re-tightened by mistake without re-running `g4_sensitivity_audit.py` first). No sector-taxonomy work is pending either (Fase A done, Fase B explicitly declined on weak evidence, don't re-attempt without new evidence).
 
